@@ -6,11 +6,14 @@ import TaskArea from '../components/TaskArea';
 import ResultPanel from '../components/ResultPanel';
 import '../style.css';
 
+// Define the backend URL (adjust if your backend is running on a different port)
+const BACKEND_URL = 'http://localhost:8000';
+
 const Chat = () => {
   const [tasks, setTasks] = useState([]);
   const [steps, setSteps] = useState([]);
   const [result, setResult] = useState(null);
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false); // Default to false
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [isResultPanelVisible, setIsResultPanelVisible] = useState(false);
   const [imageModalSrc, setImageModalSrc] = useState(null);
   const [pythonModalContent, setPythonModalContent] = useState(null);
@@ -22,9 +25,10 @@ const Chat = () => {
   const loadHistory = async () => {
     try {
       setIsLoading(true);
-      const response = await fetch('/tasks');
+      const response = await fetch(`${BACKEND_URL}/tasks`);
       if (!response.ok) {
-        throw new Error('Failed to load history');
+        const errorText = await response.text();
+        throw new Error(`Failed to load history: ${response.status} ${response.statusText} - ${errorText}`);
       }
       const data = await response.json();
       console.log('loadHistory - Fetched tasks:', data);
@@ -54,20 +58,21 @@ const Chat = () => {
     setActiveTaskId(null);
 
     try {
-      const response = await fetch('/tasks', {
+      const response = await fetch(`${BACKEND_URL}/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ prompt }),
       });
 
       if (!response.ok) {
-        throw new Error('Failed to create task');
+        const errorText = await response.text();
+        throw new Error(`Failed to create task: ${response.status} ${response.statusText} - ${errorText}`);
       }
 
       const data = await response.json();
       console.log('createTask - Response:', data);
       if (!data.task_id) {
-        throw new Error('Invalid task ID');
+        throw new Error('Invalid task ID: Response does not contain task_id');
       }
 
       setActiveTaskId(data.task_id);
@@ -90,7 +95,7 @@ const Chat = () => {
 
     const connect = () => {
       console.log(`setupSSE - Connecting to SSE for task ${taskId}`);
-      const eventSource = new EventSource(`/tasks/${taskId}/events`);
+      const eventSource = new EventSource(`${BACKEND_URL}/tasks/${taskId}/events`);
       eventSourceRef.current = eventSource;
 
       let heartbeatTimer = setInterval(() => {
@@ -98,7 +103,7 @@ const Chat = () => {
         autoScroll();
       }, 5000);
 
-      fetch(`/tasks/${taskId}`)
+      fetch(`${BACKEND_URL}/tasks/${taskId}`)
         .then((response) => response.json())
         .then((task) => {
           console.log(`setupSSE - Initial task status for ${taskId}:`, task);
@@ -137,7 +142,7 @@ const Chat = () => {
             console.log('setupSSE - Showing ResultPanel for event type', type, '. Result:', { result: formattedContent, type });
           }
 
-          fetch(`/tasks/${taskId}`)
+          fetch(`${BACKEND_URL}/tasks/${taskId}`)
             .then((response) => response.json())
             .then((task) => {
               console.log(`setupSSE - Updated task status for ${taskId}:`, task);
@@ -195,7 +200,7 @@ const Chat = () => {
         clearInterval(heartbeatTimer);
         eventSource.close();
 
-        fetch(`/tasks/${taskId}`)
+        fetch(`${BACKEND_URL}/tasks/${taskId}`)
           .then((response) => response.json())
           .then((task) => {
             console.log(`setupSSE - Task status after SSE error for ${taskId}:`, task);
@@ -254,9 +259,10 @@ const Chat = () => {
     setActiveTaskId(taskId);
 
     try {
-      const response = await fetch(`/tasks/${taskId}`);
+      const response = await fetch(`${BACKEND_URL}/tasks/${taskId}`);
       if (!response.ok) {
-        throw new Error('Failed to load task');
+        const errorText = await response.text();
+        throw new Error(`Failed to load task: ${response.status} ${response.statusText} - ${errorText}`);
       }
       const task = await response.json();
       console.log('loadTask - Fetched task:', task);
@@ -300,7 +306,7 @@ const Chat = () => {
     }
   };
 
-  const formatStepContent = (data) => { // Removed unused eventType parameter
+  const formatStepContent = (data) => {
     const now = new Date();
     const isoTimestamp = now.toISOString();
     const localTime = now.toLocaleTimeString();
@@ -363,7 +369,7 @@ const Chat = () => {
 
     const handleResize = () => {
       if (window.innerWidth <= 768) {
-        setIsSidebarOpen(false); // Always close on mobile by default
+        setIsSidebarOpen(false);
       }
     };
 
@@ -384,7 +390,6 @@ const Chat = () => {
     window.addEventListener('resize', handleResize);
     window.addEventListener('keydown', handleKeydown);
 
-    // Set initial sidebar state based on screen size
     handleResize();
 
     return () => {
@@ -441,7 +446,6 @@ const Chat = () => {
         setActiveTaskId={setActiveTaskId}
       />
 
-      {/* Only show the overlay on mobile when the sidebar is open */}
       {window.innerWidth <= 768 && (
         <div
           className={`overlay ${isSidebarOpen ? 'show' : ''}`}
@@ -482,19 +486,19 @@ const Chat = () => {
       )}
 
       {pythonModalContent && (
-        <div className="python-modal active">
-          <div className="python-console">
-            <div className="close-modal" onClick={closePythonModal}>×</div>
-            <div className="python-output">
-              <pre>{pythonModalContent.code}</pre>
-              <div style={{ color: '#4CAF50', marginTop: '10px', marginBottom: '10px' }}>
-                &gt; Simulation run output results:
-              </div>
-              <pre style={{ color: '#f8f8f8' }}>{pythonModalContent.output}</pre>
-            </div>
-          </div>
+  <div className="python-modal active">
+    <div className="python-console">
+      <div className="close-modal" onClick={closePythonModal}>×</div>
+      <div className="python-output">
+        <pre>{pythonModalContent.code}</pre>
+        <div style={{ color: '#4CAF50', marginTop: '10px', marginBottom: '10px' }}>
+          &gt; Simulation run output results:
         </div>
-      )}
+        <pre style={{ color: '#f8f8f8' }}>{pythonModalContent.output}</pre>
+      </div>
+    </div>
+  </div>
+)}
     </>
   );
 };

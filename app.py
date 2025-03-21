@@ -330,8 +330,10 @@ def frontend_not_available_response(path: str) -> HTMLResponse:
 
 @app.get("/{path:path}")
 async def proxy_to_frontend_get(path: str, request: Request):
-    api_routes = ["/tasks", "/download"]
-    if any(path.startswith(api_route.lstrip("/")) for api_route in api_routes):
+    api_routes = ["/tasks", "/download", "/tasks/"]  # Include "/tasks/" to handle trailing slashes
+    # Normalize the path by removing trailing slashes for comparison
+    normalized_path = path.rstrip('/')
+    if any(normalized_path == api_route.lstrip("/").rstrip("/") for api_route in api_routes):
         raise HTTPException(status_code=404, detail="Not found")
 
     # Check if the frontend server is available
@@ -370,8 +372,9 @@ async def proxy_to_frontend_get(path: str, request: Request):
 
 @app.post("/{path:path}")
 async def proxy_to_frontend_post(path: str, request: Request):
-    api_routes = ["/tasks", "/download"]
-    if any(path.startswith(api_route.lstrip("/")) for api_route in api_routes):
+    api_routes = ["/tasks", "/download", "/tasks/"]
+    normalized_path = path.rstrip('/')
+    if any(normalized_path == api_route.lstrip("/").rstrip("/") for api_route in api_routes):
         raise HTTPException(status_code=404, detail="Not found")
 
     frontend_url = f"{FRONTEND_URL}/{path}"

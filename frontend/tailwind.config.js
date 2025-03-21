@@ -1,3 +1,4 @@
+
 /** @type {import('tailwindcss').Config} */
 module.exports = {
   content: [
@@ -6,43 +7,69 @@ module.exports = {
   theme: {
     extend: {
       colors: {
-        'dark-bg': '#1a1a1a',
-        'dark-surface': '#2d2d2d',
-        'dark-primary': '#00dc82',
-        'dark-secondary': '#36e4da',
+        'dark-bg': '#171717',
+        'dark-surface': '#1e1e1e',
+        'dark-primary': '#0078d4',
+        'dark-secondary': '#264f78',
+        'editor-bg': '#1e1e1e',
+        'editor-surface': '#252526',
+        'editor-border': '#323232',
+        'editor-text': '#d4d4d4',
+        'editor-highlight': '#264f78',
+        'editor-accent': '#0078d4',
+        'editor-line': '#858585',
+        'gray': {
+          100: '#f5f5f5',
+          200: '#eeeeee',
+          300: '#e0e0e0',
+          400: '#bdbdbd',
+          500: '#9e9e9e',
+          600: '#757575',
+          700: '#616161',
+          800: '#424242',
+          900: '#212121',
+        }
       },
       animation: {
-        float: 'float 10s ease-in-out infinite',
-        glow: 'glow 2s ease-in-out infinite alternate',
-        'fade-in': 'fade-in 0.3s ease-out',
-        'slide-in': 'slide-in 0.3s ease-in-out',
-        'slide-out': 'slide-out 0.3s ease-in-out',
+        'fade-in': 'fade-in 0.2s ease-out',
+        'slide-in': 'slide-in 0.3s ease-out',
       },
       keyframes: {
-        float: {
-          '0%': { transform: 'translateY(0) rotate(0)', opacity: '0' },
-          '20%': { opacity: '1' },
-          '80%': { opacity: '1' },
-          '100%': { transform: 'translateY(-100vh) rotate(360deg)', opacity: '0' },
-        },
-        glow: {
-          from: { textShadow: '0 0 20px rgba(0, 220, 130, 0.6)' },
-          to: { textShadow: '0 0 40px rgba(0, 220, 130, 0.8)' },
-        },
         'fade-in': {
-          from: { opacity: '0', transform: 'translateY(10px)' },
-          to: { opacity: '1', transform: 'translateY(0)' },
+          '0%': { opacity: '0' },
+          '100%': { opacity: '1' },
         },
         'slide-in': {
-          from: { transform: 'translateX(100%)', opacity: '0' },
-          to: { transform: 'translateX(0)', opacity: '1' },
+          '0%': { transform: 'translateX(-10px)', opacity: '0' },
+          '100%': { transform: 'translateX(0)', opacity: '1' },
+        }
+      },
+    },
+  },
+  plugins: [
+    require('@tailwindcss/typography'),
+    require('tailwind-scrollbar'),
+  ],
+  layer: {
+    utilities: {
+      '.scrollbar-thin': {
+        scrollbarWidth: 'thin',
+        '&::-webkit-scrollbar': {
+          width: '8px',
+          height: '8px',
         },
-        'slide-out': {
-          from: { transform: 'translateX(0)', opacity: '1' },
-          to: { transform: 'translateX(100%)', opacity: '0' },
+      },
+      '.scrollbar-thumb-gray-600': {
+        '&::-webkit-scrollbar-thumb': {
+          backgroundColor: '#4B5563',
+          borderRadius: '4px',
+        },
+      },
+      '.scrollbar-track-transparent': {
+        '&::-webkit-scrollbar-track': {
+          backgroundColor: 'transparent',
         },
       },
     },
   },
-  plugins: [],
 };
