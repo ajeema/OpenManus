@@ -1,3 +1,4 @@
+# File: app.py
 import asyncio
 import os
 import threading
@@ -9,26 +10,19 @@ from functools import partial
 from json import dumps
 from pathlib import Path
 
+import httpx
 from fastapi import Body, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import (
-    FileResponse,
-    HTMLResponse,
-    JSONResponse,
-    StreamingResponse,
-)
-from fastapi.staticfiles import StaticFiles
-from fastapi.templating import Jinja2Templates
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, HTMLResponse
 from pydantic import BaseModel
+from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 app = FastAPI()
 
-app.mount("/static", StaticFiles(directory="static"), name="static")
-templates = Jinja2Templates(directory="templates")
-
+# Update CORS to allow requests from the React dev server (localhost:3000 and others)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:3000", "http://localhost:3001", "http://localhost:8000", "*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -40,8 +34,8 @@ class Task(BaseModel):
     created_at: datetime
     status: str
     steps: list = []
-    token_usage: dict = {"input": 0, "completion": 0, "total": 0}  # Added token_usage
-    execution_time: float = 0.0  # Added execution_time
+    token_usage: dict = {"input": 0, "completion": 0, "total": 0}
+    execution_time: float = 0.0
 
     def model_dump(self, *args, **kwargs):
         data = super().model_dump(*args, **kwargs)
@@ -63,7 +57,7 @@ class TaskManager:
         return task
 
     async def update_task_step(
-        self, task_id: str, step: int, result: str, step_type: str = "step"
+            self, task_id: str, step: int, result: str, step_type: str = "step"
     ):
         if task_id in self.tasks:
             task = self.tasks[task_id]
@@ -131,14 +125,6 @@ class TaskManager:
 
 task_manager = TaskManager()
 
-@app.get("/", response_class=HTMLResponse)
-async def index(request: Request):
-    return templates.TemplateResponse("index.html", {"request": request})
-
-@app.get("/chat", response_class=HTMLResponse)
-async def chat(request: Request):
-    return templates.TemplateResponse("chat.html", {"request": request})
-
 @app.get("/download")
 async def download_file(file_path: str):
     if not os.path.exists(file_path):
@@ -155,6 +141,7 @@ from app.agent.manus import Manus
 
 async def run_task(task_id: str, prompt: str):
     try:
+        print(f"run_task - Starting task {task_id} with prompt: {prompt}")
         start_time = datetime.now()
         task_manager.tasks[task_id].status = "running"
 
@@ -162,21 +149,26 @@ async def run_task(task_id: str, prompt: str):
             name="Manus",
             description="A versatile agent that can solve various tasks using multiple tools",
         )
+        print("run_task - Manus agent initialized")
 
         async def on_think(thought):
+            print(f"run_task - on_think: {thought}")
             await task_manager.update_task_step(task_id, 0, thought, "think")
 
         async def on_tool_execute(tool, input):
+            print(f"run_task - on_tool_execute: tool={tool}, input={input}")
             await task_manager.update_task_step(
                 task_id, 0, f"Executing tool: {tool}\nInput: {input}", "tool"
             )
 
         async def on_action(action):
+            print(f"run_task - on_action: {action}")
             await task_manager.update_task_step(
                 task_id, 0, f"Executing action: {action}", "act"
             )
 
         async def on_run(step, result):
+            print(f"run_task - on_run: step={step}, result={result}")
             await task_manager.update_task_step(task_id, step, result, "run")
 
         from app.logger import logger
@@ -217,17 +209,20 @@ async def run_task(task_id: str, prompt: str):
                     event_type = "complete"
                     result = cleaned_message.replace("🏁 Special tool", "").strip()
 
+                print(f"SSELogHandler - Emitting event: type={event_type}, result={result}")
                 await task_manager.update_task_step(self.task_id, step, result, event_type)
 
         sse_handler = SSELogHandler(task_id)
         logger.add(sse_handler)
 
         result = await agent.run(prompt)
+        print(f"run_task - Agent run completed. Result: {result}")
         execution_time = (datetime.now() - start_time).total_seconds()
         await task_manager.update_execution_time(task_id, execution_time)
         await task_manager.update_task_step(task_id, 1, result, "result")
         await task_manager.complete_task(task_id)
     except Exception as e:
+        print(f"run_task - Error: {str(e)}")
         await task_manager.fail_task(task_id, str(e))
 
 @app.get("/tasks/{task_id}/events")
@@ -296,21 +291,136 @@ async def get_task(task_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
     return task_manager.tasks[task_id]
 
+# Proxy requests to the React development server
+FRONTEND_URL = "http://localhost:3000"
+
+# Health check for the frontend server
+async def check_frontend_health(url: str) -> bool:
+    async with httpx.AsyncClient() as client:
+        try:
+            response = await client.get(url, timeout=5.0)
+            return response.status_code == 200
+        except httpx.RequestError:
+            return False
+
+# Fallback response if the frontend server is not running
+def frontend_not_available_response(path: str) -> HTMLResponse:
+    return HTMLResponse(
+        content=f"""
+        <h1>Frontend Server Not Available</h1>
+        <p>Could not connect to the React development server at {FRONTEND_URL}.</p>
+        <p><b>Requested Path:</b> /{path}</p>
+        <h2>Troubleshooting Steps:</h2>
+        <ul>
+            <li>Ensure the React development server is running. In the <code>frontend</code> directory, run:
+                <pre>npm start</pre>
+            </li>
+            <li>Check if the server is running on <a href="{FRONTEND_URL}" target="_blank">{FRONTEND_URL}</a>. If not, it may be on a different port (e.g., 3001).</li>
+            <li>If the port is different, update the <code>FRONTEND_URL</code> in <code>app.py</code> to match the correct port.</li>
+            <li>Alternatively, set a fixed port in <code>frontend/.env</code> by adding:
+                <pre>PORT=3000</pre>
+                Then restart the React server.
+            </li>
+            <li>Check for network issues or firewall settings that might be blocking connections to {FRONTEND_URL}.</li>
+        </ul>
+        <p>After starting the React server, <a href="/">refresh this page</a>.</p>
+        """,
+        status_code=503
+    )
+
+@app.get("/{path:path}")
+async def proxy_to_frontend_get(path: str, request: Request):
+    api_routes = ["/tasks", "/download"]
+    if any(path.startswith(api_route.lstrip("/")) for api_route in api_routes):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    # Check if the frontend server is available
+    frontend_url = f"{FRONTEND_URL}/{path}"
+    if not await check_frontend_health(FRONTEND_URL):
+        return frontend_not_available_response(path)
+
+    # Retry logic for proxying requests
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(2),
+        retry=retry_if_exception_type(httpx.RequestError),
+        before=lambda _: print(f"Retrying GET request to {frontend_url}...")
+    )
+    async def make_get_request(client, url, params):
+        return await client.get(url, params=params, timeout=15.0)
+
+    async with httpx.AsyncClient() as client:
+        try:
+            print(f"Proxying GET request to: {frontend_url}")
+            print(f"Query params: {dict(request.query_params)}")
+            response = await make_get_request(client, frontend_url, dict(request.query_params))
+            print(f"Received response from frontend: {response.status_code}")
+            print(f"Response headers: {dict(response.headers)}")
+            return StreamingResponse(
+                content=response.aiter_text(),
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.headers.get("content-type", "text/html")
+            )
+        except httpx.RequestError as e:
+            print(f"Error proxying GET to frontend: {str(e)}")
+            print(f"Request URL: {frontend_url}")
+            print(f"Exception type: {type(e).__name__}")
+            return frontend_not_available_response(path)
+
+@app.post("/{path:path}")
+async def proxy_to_frontend_post(path: str, request: Request):
+    api_routes = ["/tasks", "/download"]
+    if any(path.startswith(api_route.lstrip("/")) for api_route in api_routes):
+        raise HTTPException(status_code=404, detail="Not found")
+
+    frontend_url = f"{FRONTEND_URL}/{path}"
+    if not await check_frontend_health(FRONTEND_URL):
+        return frontend_not_available_response(path)
+
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_fixed(2),
+        retry=retry_if_exception_type(httpx.RequestError),
+        before=lambda _: print(f"Retrying POST request to {frontend_url}...")
+    )
+    async def make_post_request(client, url, params, content):
+        return await client.post(url, params=params, content=content, timeout=15.0)
+
+    async with httpx.AsyncClient() as client:
+        try:
+            print(f"Proxying POST request to: {frontend_url}")
+            body = await request.body()
+            response = await make_post_request(client, frontend_url, dict(request.query_params), body)
+            print(f"Received response from frontend: {response.status_code}")
+            return StreamingResponse(
+                content=response.aiter_text(),
+                status_code=response.status_code,
+                headers=dict(response.headers),
+                media_type=response.headers.get("content-type", "text/html")
+            )
+        except httpx.RequestError as e:
+            print(f"Error proxying POST to frontend: {str(e)}")
+            print(f"Request URL: {frontend_url}")
+            print(f"Exception type: {type(e).__name__}")
+            return frontend_not_available_response(path)
+
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
+    print(f"Unhandled server error: {str(exc)}")
     return JSONResponse(
-        status_code=500, content={"message": f"Server error: {str(exc)}"}
+        status_code=500,
+        content={"message": f"Server error: {str(exc)}", "path": request.url.path},
     )
 
 def open_local_browser(config):
-    webbrowser.open_new_tab(f"http://{config['host']}:{config['port']}")
+    webbrowser.open_new_tab(f"http://{config['host']}:{config['port']}/")
 
 def load_config():
     try:
         config_path = Path(__file__).parent / "config" / "config.toml"
         with open(config_path, "rb") as f:
             config = tomllib.load(f)
-        # Override port to 8000 if not specified or conflicting
         config["server"]["port"] = config["server"].get("port", 8000)
         return {"host": config["server"]["host"], "port": config["server"]["port"]}
     except FileNotFoundError:
@@ -322,6 +432,7 @@ def load_config():
 
 if __name__ == "__main__":
     import uvicorn
+
     config = load_config()
     if config["port"] == 11434:  # Avoid conflict with Ollama
         print("Port 11434 is in use (likely by Ollama), switching to 8000")
