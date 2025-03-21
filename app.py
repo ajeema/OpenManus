@@ -328,6 +328,48 @@ def frontend_not_available_response(path: str) -> HTMLResponse:
         status_code=503
     )
 
+@app.get("/api/config")
+async def get_config():
+    root_dir = Path(__file__).parent
+    config_dir = root_dir / "config"
+    config_path = config_dir / "config.toml"
+    example_config_path = config_dir / "config.example.toml"
+    
+    try:
+        # First try reading config.toml
+        if config_path.exists():
+            with open(config_path, "r", encoding='utf-8') as f:
+                return JSONResponse({"content": f.read(), "source": "config.toml"})
+        
+        # If no config.toml, try reading config.example.toml
+        if example_config_path.exists():
+            with open(example_config_path, "r", encoding='utf-8') as f:
+                return JSONResponse({"content": f.read(), "source": "config.example.toml"})
+                
+        # No config files found
+        return JSONResponse(
+            status_code=404,
+            content={"error": f"No config.toml or config.example.toml found in {config_dir}"}
+        )
+        
+        return JSONResponse({"content": config_content})
+    except Exception as e:
+        return JSONResponse(
+            status_code=500,
+            content={"error": f"Failed to read config: {str(e)}"}
+        )
+
+@app.post("/api/config")
+async def save_config(request: Request):
+    config_path = Path("config/config.toml")
+    try:
+        content = await request.json()
+        with open(config_path, "w") as f:
+            f.write(content["content"])
+        return JSONResponse({"status": "success"})
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/{path:path}")
 async def proxy_to_frontend_get(path: str, request: Request):
     api_routes = ["/tasks", "/download", "/tasks/"]  # Include "/tasks/" to handle trailing slashes

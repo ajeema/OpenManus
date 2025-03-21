@@ -3,7 +3,14 @@ import { Link } from 'react-router-dom';
 
 const Home = () => {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-dark-bg">
+    <div className="min-h-screen flex items-center justify-center bg-dark-bg relative">
+      <Link 
+        to="/config" 
+        className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
+        aria-label="Settings"
+      >
+        <i className="fas fa-cog text-2xl"></i>
+      </Link>
       <div className="text-center p-8 max-w-3xl relative">
         <div className="absolute inset-0 pointer-events-none">
           <span className="absolute text-4xl animate-float" style={{ top: '20%', left: '20%', animationDelay: '0s' }}>🤖</span>

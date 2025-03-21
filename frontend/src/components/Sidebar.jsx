@@ -1,72 +1,44 @@
 import React from 'react';
 
-const Sidebar = ({ tasks, loadTask, isOpen, toggleSidebar, loadHistory, activeTaskId, setActiveTaskId }) => {
-  const handleDelete = async (taskId) => {
-    try {
-      const response = await fetch(`/tasks/${taskId}`, {
-        method: 'DELETE',
-      });
-      if (!response.ok) {
-        throw new Error('Failed to delete task');
-      }
-      await loadHistory();
-      if (activeTaskId === taskId) {
-        setActiveTaskId(null);
-      }
-    } catch (error) {
-      console.error('Failed to delete task:', error);
-    }
-  };
-
-  const handleLoadTask = (taskId) => {
-    setActiveTaskId(taskId);
-    loadTask(taskId);
-  };
-
+const Sidebar = ({ isOpen, onClose, tasks, activeTaskId, onTaskSelect, className = '' }) => {
   return (
-    <div className={`history-panel ${isOpen ? 'open' : ''}`}>
-      <div className="history-header">
-        <h2 className="text-lg font-semibold text-white">Manus History</h2>
+    <div className={`
+      fixed md:relative
+      w-64 h-full
+      transform transition-transform duration-200
+      ${isOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}
+      bg-editor-surface border-r border-editor-border
+      ${className}
+    `}>
+      <div className="flex items-center justify-between p-4 border-b border-editor-border">
+        <h2 className="text-lg font-semibold">History</h2>
         <button
-          className="close-history text-white hover:text-gray-200 md:hidden"
-          onClick={toggleSidebar}
+          onClick={onClose}
+          className="md:hidden p-2 hover:bg-editor-bg rounded-full transition-colors"
         >
-          <i className="fas fa-times"></i>
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
         </button>
       </div>
-      <div className="history-content">
-        <div className="history-section">
-          <div className="history-section-title">Tasks</div>
-          {tasks.length === 0 ? (
-            <p className="text-gray-400 px-4">No tasks yet.</p>
-          ) : (
-            <ul className="space-y-1">
-              {tasks.map((task) => (
-                <li
-                  key={task.id}
-                  className={`history-item ${activeTaskId === task.id ? 'active' : ''}`}
-                >
-                  <span className="history-item-icon">
-                    <i className="fas fa-tasks"></i>
-                  </span>
-                  <div className="task-info" onClick={() => handleLoadTask(task.id)}>
-                    <p className="task-prompt">{task.prompt}</p>
-                    <p className="task-status">{task.status}</p>
-                  </div>
-                  <button
-                    className="delete-task"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      handleDelete(task.id);
-                    }}
-                  >
-                    <i className="fas fa-trash-alt"></i>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
+
+      <div className="overflow-y-auto h-[calc(100%-4rem)]">
+        {tasks.map((task) => (
+          <button
+            key={task.id}
+            onClick={() => onTaskSelect(task.id)}
+            className={`
+              w-full text-left p-4 hover:bg-editor-bg
+              transition-colors border-b border-editor-border
+              ${activeTaskId === task.id ? 'bg-editor-bg' : ''}
+            `}
+          >
+            <p className="truncate">{task.prompt}</p>
+            <p className="text-sm text-gray-500 mt-1">
+              {new Date(task.timestamp).toLocaleString()}
+            </p>
+          </button>
+        ))}
       </div>
     </div>
   );

@@ -1,505 +1,243 @@
-// File: src/pages/Chat.jsx
-import { useEffect, useState, useRef } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useRef, useEffect } from 'react';
 import Sidebar from '../components/Sidebar';
 import TaskArea from '../components/TaskArea';
 import ResultPanel from '../components/ResultPanel';
+import TaskStatus from '../components/TaskStatus'; // Added import
 import '../style.css';
 
-// Define the backend URL (adjust if your backend is running on a different port)
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = 'http://0.0.0.0:8000';
 
 const Chat = () => {
   const [tasks, setTasks] = useState([]);
   const [steps, setSteps] = useState([]);
   const [result, setResult] = useState(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [isResultPanelVisible, setIsResultPanelVisible] = useState(false);
-  const [imageModalSrc, setImageModalSrc] = useState(null);
-  const [pythonModalContent, setPythonModalContent] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isResultPanelVisible, setIsResultPanelVisible] = useState(true);
+  const [isResultPanelCollapsed, setIsResultPanelCollapsed] = useState(false);
   const [activeTaskId, setActiveTaskId] = useState(null);
   const eventSourceRef = useRef(null);
   const stepsContainerRef = useRef(null);
+  const [showConfig, setShowConfig] = useState(false); 
+  const [config, setConfig] = useState(''); 
+  const [configError, setConfigError] = useState(''); 
+  const [configStatus, setConfigStatus] = useState(''); 
+  const [prompt, setPrompt] = useState('');
+  const [currentTaskStatus, setCurrentTaskStatus] = useState(''); 
+
+  useEffect(() => {
+    loadHistory();
+  }, []);
 
   const loadHistory = async () => {
     try {
-      setIsLoading(true);
       const response = await fetch(`${BACKEND_URL}/tasks`);
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`Failed to load history: ${response.status} ${response.statusText} - ${errorText}`);
       }
       const data = await response.json();
-      console.log('loadHistory - Fetched tasks:', data);
       setTasks(Array.isArray(data) ? data : []);
     } catch (error) {
       console.error('loadHistory - Failed to load history:', error);
       setTasks([]);
-    } finally {
-      setIsLoading(false);
     }
   };
 
-  const createTask = async (prompt) => {
-    if (!prompt) {
-      alert('Please enter a valid task');
-      return;
-    }
+  const createTask = async () => {
+    if (!prompt.trim()) return;
+    setCurrentTaskStatus('creating'); 
 
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
-      eventSourceRef.current = null;
     }
 
     setSteps([]);
     setResult(null);
     setIsResultPanelVisible(false);
-    setActiveTaskId(null);
 
     try {
-      const response = await fetch(`${BACKEND_URL}/tasks`, {
+      const response = await fetch(`${BACKEND_URL}/api/tasks`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt: prompt.trim() })
       });
 
       if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to create task: ${response.status} ${response.statusText} - ${errorText}`);
+        const error = await response.json();
+        throw new Error(error.detail || 'Request failed');
       }
 
       const data = await response.json();
-      console.log('createTask - Response:', data);
-      if (!data.task_id) {
-        throw new Error('Invalid task ID: Response does not contain task_id');
-      }
+      if (data.task_id) {
+        setCurrentTaskStatus('running');
+        setupSSE(data.task_id);
+        loadHistory();
+        setPrompt('');
 
-      setActiveTaskId(data.task_id);
-      setupSSE(data.task_id);
-      await loadHistory();
+      }
     } catch (error) {
-      console.error('createTask - Failed to create task:', error);
-      setSteps([{ type: 'error', content: `Error: ${error.message}`, timestamp: new Date().toLocaleTimeString() }]);
-      setResult({ result: error.message, type: 'error' });
+      setSteps([{ type: 'error', content: `Error: ${error.message}` }]);
+      setResult(error.message);
       setIsResultPanelVisible(true);
-      console.log('createTask - Showing ResultPanel on error. Result:', { result: error.message, type: 'error' });
+      setCurrentTaskStatus(''); 
     }
   };
 
   const setupSSE = (taskId) => {
-    let retryCount = 0;
-    const maxRetries = 3;
-    const retryDelay = 2000;
-    let stepsData = [];
+    const eventSource = new EventSource(`/tasks/${taskId}/events`);
+    eventSourceRef.current = eventSource;
 
-    const connect = () => {
-      console.log(`setupSSE - Connecting to SSE for task ${taskId}`);
-      const eventSource = new EventSource(`${BACKEND_URL}/tasks/${taskId}/events`);
-      eventSourceRef.current = eventSource;
+    ['think', 'tool', 'act', 'log', 'run', 'message'].forEach(type => {
+      eventSource.addEventListener(type, (event) => {
+        const data = JSON.parse(event.data);
+        const newStep = {
+          type,
+          content: data.result || data.message,
+          timestamp: new Date().toLocaleTimeString()
+        };
+        setSteps(prev => [...prev, newStep]);
 
-      let heartbeatTimer = setInterval(() => {
-        setSteps((prev) => [...prev, { type: 'ping', content: '·', timestamp: new Date().toLocaleTimeString() }]);
-        autoScroll();
-      }, 5000);
-
-      fetch(`${BACKEND_URL}/tasks/${taskId}`)
-        .then((response) => response.json())
-        .then((task) => {
-          console.log(`setupSSE - Initial task status for ${taskId}:`, task);
-          updateTaskStatus(task);
-        })
-        .catch((error) => {
-          console.error('setupSSE - Initial status retrieval failed:', error);
-        });
-
-      const handleEvent = (event, type) => {
-        clearInterval(heartbeatTimer);
-        try {
-          const data = JSON.parse(event.data);
-          console.log(`setupSSE - Received ${type} event:`, data);
-          const { formattedContent, timestamp, isoTimestamp } = formatStepContent(data, type);
-
-          stepsData.push({
-            type,
-            content: formattedContent,
-            timestamp,
-            isoTimestamp,
-            expanded: false,
-          });
-
-          stepsData.sort((a, b) => {
-            const timeCompare = new Date(a.isoTimestamp) - new Date(b.isoTimestamp);
-            return timeCompare !== 0 ? timeCompare : stepsData.indexOf(a) - stepsData.indexOf(b);
-          });
-
-          setSteps([...stepsData]);
-          autoScroll();
-
-          if (type === 'tool' || type === 'act' || type === 'result') {
-            setResult({ result: formattedContent, type });
-            setIsResultPanelVisible(true);
-            console.log('setupSSE - Showing ResultPanel for event type', type, '. Result:', { result: formattedContent, type });
-          }
-
-          fetch(`${BACKEND_URL}/tasks/${taskId}`)
-            .then((response) => response.json())
-            .then((task) => {
-              console.log(`setupSSE - Updated task status for ${taskId}:`, task);
-              updateTaskStatus(task);
-            })
-            .catch((error) => {
-              console.error('setupSSE - Failed to update status:', error);
-            });
-        } catch (e) {
-          console.error(`setupSSE - Error processing ${type} event:`, e);
-        }
-      };
-
-      const eventTypes = ['think', 'tool', 'act', 'log', 'run', 'message'];
-      eventTypes.forEach((type) => {
-        eventSource.addEventListener(type, (event) => handleEvent(event, type));
-      });
-
-      eventSource.addEventListener('complete', (event) => {
-        clearInterval(heartbeatTimer);
-        try {
-          const data = JSON.parse(event.data);
-          console.log('setupSSE - Received complete event:', data);
-          setSteps((prev) => [...prev, { type: 'complete', content: '✅ Task completed', timestamp: new Date().toLocaleTimeString() }]);
-          setResult({ result: data.result || '', type: 'complete' });
+        if (type === 'tool' || type === 'act') {
+          setResult(data.result);
           setIsResultPanelVisible(true);
-          console.log('setupSSE - Showing ResultPanel on complete. Result:', { result: data.result || '', type: 'complete' });
-          eventSource.close();
-          eventSourceRef.current = null;
-        } catch (e) {
-          console.error('setupSSE - Error processing completion event:', e);
         }
       });
+    });
 
-      eventSource.addEventListener('error', (event) => {
-        clearInterval(heartbeatTimer);
-        try {
-          const data = JSON.parse(event.data);
-          console.log('setupSSE - Received error event:', data);
-          setSteps((prev) => [...prev, { type: 'error', content: `❌ Error: ${data.message}`, timestamp: new Date().toLocaleTimeString() }]);
-          setResult({ result: data.message, type: 'error' });
-          setIsResultPanelVisible(true);
-          console.log('setupSSE - Showing ResultPanel on error. Result:', { result: data.message, type: 'error' });
-          eventSource.close();
-          eventSourceRef.current = null;
-        } catch (e) {
-          console.error('setupSSE - Error processing error event:', e);
-        }
-      });
-
-      eventSource.onerror = (err) => {
-        if (eventSource.readyState === EventSource.CLOSED) return;
-
-        console.error('setupSSE - SSE connection error:', err);
-        clearInterval(heartbeatTimer);
-        eventSource.close();
-
-        fetch(`${BACKEND_URL}/tasks/${taskId}`)
-          .then((response) => response.json())
-          .then((task) => {
-            console.log(`setupSSE - Task status after SSE error for ${taskId}:`, task);
-            if (task.status === 'completed' || task.status.includes('failed')) {
-              updateTaskStatus(task);
-              if (task.status === 'completed') {
-                setSteps((prev) => [...prev, { type: 'complete', content: '✅ Task completed', timestamp: new Date().toLocaleTimeString() }]);
-                if (task.steps && task.steps.length > 0) {
-                  const lastStep = task.steps[task.steps.length - 1];
-                  setResult({ result: lastStep.result, type: 'complete' });
-                  setIsResultPanelVisible(true);
-                  console.log('setupSSE - Showing ResultPanel on SSE complete. Result:', { result: lastStep.result, type: 'complete' });
-                }
-              } else {
-                setSteps((prev) => [...prev, { type: 'error', content: `❌ Error: ${task.status || 'Task failed'}`, timestamp: new Date().toLocaleTimeString() }]);
-                setResult({ result: task.status || 'Task failed', type: 'error' });
-                setIsResultPanelVisible(true);
-                console.log('setupSSE - Showing ResultPanel on SSE error. Result:', { result: task.status || 'Task failed', type: 'error' });
-              }
-            } else if (retryCount < maxRetries) {
-              retryCount++;
-              setSteps((prev) => [
-                ...prev,
-                { type: 'warning', content: `⚠ Connection lost, retrying in ${retryDelay / 1000} seconds (${retryCount}/${maxRetries})...`, timestamp: new Date().toLocaleTimeString() },
-              ]);
-              setTimeout(connect, retryDelay);
-            } else {
-              setSteps((prev) => [...prev, { type: 'error', content: '⚠ Connection lost, please refresh the page', timestamp: new Date().toLocaleTimeString() }]);
-              setResult({ result: 'Connection lost, please refresh the page', type: 'error' });
-              setIsResultPanelVisible(true);
-              console.log('setupSSE - Showing ResultPanel on connection lost. Result:', { result: 'Connection lost, please refresh the page', type: 'error' });
-            }
-          })
-          .catch((error) => {
-            console.error('setupSSE - Failed to check task status:', error);
-            if (retryCount < maxRetries) {
-              retryCount++;
-              setTimeout(connect, retryDelay);
-            }
-          });
-      };
-    };
-
-    connect();
-  };
-
-  const loadTask = async (taskId) => {
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-      eventSourceRef.current = null;
-    }
-
-    setSteps([]);
-    setResult(null);
-    setIsResultPanelVisible(false);
-    setActiveTaskId(taskId);
-
-    try {
-      const response = await fetch(`${BACKEND_URL}/tasks/${taskId}`);
-      if (!response.ok) {
-        const errorText = await response.text();
-        throw new Error(`Failed to load task: ${response.status} ${response.statusText} - ${errorText}`);
-      }
-      const task = await response.json();
-      console.log('loadTask - Fetched task:', task);
-
-      if (task.steps && task.steps.length > 0) {
-        let taskSteps = [];
-        task.steps.forEach((step, index) => {
-          const stepTimestamp = new Date(step.created_at || task.created_at).toLocaleTimeString();
-          taskSteps.push({
-            type: step.type,
-            content: step.result,
-            timestamp: stepTimestamp,
-            expanded: index === task.steps.length - 1,
-          });
-        });
-
-        taskSteps.sort((a, b) => {
-          const timeCompare = new Date(a.timestamp) - new Date(b.timestamp);
-          return timeCompare !== 0 ? timeCompare : taskSteps.indexOf(a) - taskSteps.indexOf(b);
-        });
-
-        setSteps(taskSteps);
-        const lastStep = taskSteps[taskSteps.length - 1];
-        setResult({ result: lastStep.content, type: lastStep.type });
-        setIsResultPanelVisible(true);
-        console.log('loadTask - Showing ResultPanel. Result:', { result: lastStep.content, type: lastStep.type });
-      } else {
-        setSteps([{ type: 'info', content: 'No steps recorded for this task', timestamp: new Date().toLocaleTimeString() }]);
-        setResult({ result: 'No steps recorded for this task', type: 'info' });
-        setIsResultPanelVisible(true);
-        console.log('loadTask - Showing ResultPanel (no steps). Result:', { result: 'No steps recorded for this task', type: 'info' });
-      }
-
-      updateTaskStatus(task);
-    } catch (error) {
-      console.error('loadTask - Failed to load task:', error);
-      setSteps([{ type: 'error', content: `Error: ${error.message}`, timestamp: new Date().toLocaleTimeString() }]);
-      setResult({ result: error.message, type: 'error' });
+    eventSource.addEventListener('complete', (event) => {
+      const data = JSON.parse(event.data);
+      setSteps(prev => [...prev, {
+        type: 'complete',
+        content: '✅ Task completed',
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+      setResult(data.result);
       setIsResultPanelVisible(true);
-      console.log('loadTask - Showing ResultPanel on error. Result:', { result: error.message, type: 'error' });
-    }
-  };
+      eventSource.close();
+      setCurrentTaskStatus(''); 
+    });
 
-  const formatStepContent = (data) => {
-    const now = new Date();
-    const isoTimestamp = now.toISOString();
-    const localTime = now.toLocaleTimeString();
-
-    return {
-      formattedContent: data.result || data.message || JSON.stringify(data),
-      timestamp: localTime,
-      isoTimestamp,
-    };
-  };
-
-  const updateTaskStatus = (task) => {
-    setTasks((prevTasks) =>
-      prevTasks.map((t) => (t.id === task.id ? { ...t, status: task.status } : t))
-    );
-  };
-
-  const toggleSidebar = () => {
-    setIsSidebarOpen((prev) => {
-      console.log('toggleSidebar - New isSidebarOpen:', !prev);
-      return !prev;
+    eventSource.addEventListener('error', (event) => {
+      setSteps(prev => [...prev, {
+        type: 'error',
+        content: `❌ Error: ${event.data}`,
+        timestamp: new Date().toLocaleTimeString()
+      }]);
+      setIsResultPanelVisible(true);
+      eventSource.close();
+      setCurrentTaskStatus(''); 
     });
   };
 
-  const toggleResultPanel = () => {
-    setIsResultPanelVisible((prev) => {
-      console.log('toggleResultPanel - New visibility:', !prev);
-      return !prev;
-    });
-  };
-
-  const autoScroll = () => {
-    if (stepsContainerRef.current) {
-      requestAnimationFrame(() => {
-        stepsContainerRef.current.scrollTo({
-          top: stepsContainerRef.current.scrollHeight,
-          behavior: 'smooth',
-        });
+  const saveConfig = async () => {
+    setConfigStatus('Saving...');
+    setConfigError('');
+    try {
+      const response = await fetch(`${BACKEND_URL}/config`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ config }),
       });
-      setTimeout(() => {
-        stepsContainerRef.current.scrollTop = stepsContainerRef.current.scrollHeight;
-      }, 100);
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.message || 'Failed to save config');
+      }
+      setConfigStatus('Config saved successfully!');
+      setTimeout(() => setConfigStatus(''), 3000); 
+    } catch (error) {
+      setConfigError(`Failed to save config: ${error.message}`);
     }
   };
 
-  const closeImageModal = () => {
-    setImageModalSrc(null);
-  };
-
-  const closePythonModal = () => {
-    setPythonModalContent(null);
-  };
-
-  useEffect(() => {
-    loadHistory();
-
-    if (window.componentHandler) {
-      window.componentHandler.upgradeAllRegistered();
-    }
-
-    const handleResize = () => {
-      if (window.innerWidth <= 768) {
-        setIsSidebarOpen(false);
-      }
-    };
-
-    const handleKeydown = (e) => {
-      if (e.key === 'Escape') {
-        if (isSidebarOpen) {
-          setIsSidebarOpen(false);
-        }
-        if (imageModalSrc) {
-          closeImageModal();
-        }
-        if (pythonModalContent) {
-          closePythonModal();
-        }
-      }
-    };
-
-    window.addEventListener('resize', handleResize);
-    window.addEventListener('keydown', handleKeydown);
-
-    handleResize();
-
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
-      window.removeEventListener('resize', handleResize);
-      window.removeEventListener('keydown', handleKeydown);
-    };
-  }, [isSidebarOpen, imageModalSrc, pythonModalContent]);
-
-  useEffect(() => {
-    console.log('useEffect - isResultPanelVisible updated:', isResultPanelVisible);
-  }, [isResultPanelVisible]);
-
-  console.log('Rendering Chat. isResultPanelVisible:', isResultPanelVisible, 'Result:', result);
-
-  if (isLoading) {
-    return <div>Loading...</div>;
-  }
 
   return (
-    <>
-      <header className="header mdl-shadow--2dp">
-        <div className="header-left">
-          <button className="menu-toggle" onClick={toggleSidebar}>
-            <i className="fas fa-bars"></i>
-          </button>
-          <Link to="/" className="logo">
-            <img
-              src="/static/logo.png"
-              alt="OpenManus logo"
-              className="logo-img mdl-shadow--2dp"
-              onError={(e) => (e.target.src = 'https://via.placeholder.com/100?text=Logo')}
-            />
-            <span className="logo-text mdl-typography--headline">OpenManus</span>
-          </Link>
-        </div>
-        <div className="header-right">
-          <button className="login-btn mdl-button mdl-js-button mdl-button--raised">
-            <i className="fas fa-user"></i>
-            Login
-          </button>
-        </div>
-      </header>
-
-      <Sidebar
-        tasks={tasks}
-        loadTask={loadTask}
+    <div className="flex h-screen bg-dark-bg text-editor-text overflow-hidden">
+      <Sidebar 
         isOpen={isSidebarOpen}
-        toggleSidebar={toggleSidebar}
-        loadHistory={loadHistory}
+        onClose={() => setIsSidebarOpen(false)}
+        tasks={tasks}
         activeTaskId={activeTaskId}
-        setActiveTaskId={setActiveTaskId}
+        onTaskSelect={(taskId) => setActiveTaskId(taskId)}
+        className="z-30"
       />
 
-      {window.innerWidth <= 768 && (
-        <div
-          className={`overlay ${isSidebarOpen ? 'show' : ''}`}
-          onClick={toggleSidebar}
-        ></div>
-      )}
-
-      <main className={`container mdl-layout__content ${isResultPanelVisible ? 'with-result' : ''}`}>
-        <div className="main-panel">
+      <main className="flex-1 flex flex-col h-full">
+        <div className="flex-1 overflow-hidden relative">
           <TaskArea
             steps={steps}
-            createTask={createTask}
-            stepsContainerRef={stepsContainerRef}
+            ref={stepsContainerRef}
+            className="h-full overflow-y-auto px-4 py-6 bg-editor-bg"
           />
-          <ResultPanel
-            result={result}
-            isVisible={isResultPanelVisible}
-            toggleResultPanel={toggleResultPanel}
-          />
-          <button
-            onClick={() => {
-              setIsResultPanelVisible(true);
-              setResult({ result: 'Test result', type: 'test' });
-              console.log('Manually showing ResultPanel. isResultPanelVisible:', true, 'Result:', { result: 'Test result', type: 'test' });
-            }}
-            style={{ position: 'fixed', top: '100px', left: '20px', zIndex: 1000 }}
-          >
-            Show ResultPanel (Debug)
-          </button>
+          <TaskStatus status={currentTaskStatus} /> {/* Displaying task status */}
+          {isResultPanelVisible && (
+            <ResultPanel 
+              result={result}
+              isResultPanelCollapsed={isResultPanelCollapsed}
+              setIsResultPanelCollapsed={setIsResultPanelCollapsed}
+            />
+          )}
+        </div>
+
+        <div className="border-t border-editor-border bg-editor-surface p-4">
+          <div className="max-w-4xl mx-auto flex gap-4 items-center">
+            <input
+              type="text"
+              placeholder="Type your question here..."
+              className="flex-1 px-4 py-2 rounded-lg bg-editor-bg border border-editor-border focus:border-editor-accent focus:outline-none"
+              value={prompt}
+              onChange={(e) => setPrompt(e.target.value)}
+            />
+            <button
+              onClick={createTask}
+              className="px-6 py-2 rounded-lg bg-editor-accent text-white hover:bg-opacity-90 transition-colors"
+            >
+              Send
+            </button>
+            <button
+              onClick={() => setShowConfig(!showConfig)}
+              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
+              aria-label="Settings"
+            >
+              <i className="fas fa-cog text-2xl"></i>
+            </button>
+
+            {showConfig && (
+              <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+                <div className="bg-white rounded-lg p-6 max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+                  <div className="flex justify-between items-center mb-4">
+                    <h2 className="text-2xl font-bold">Configuration</h2>
+                    <button onClick={() => setShowConfig(false)} className="text-gray-500 hover:text-gray-700">
+                      <i className="fas fa-times"></i>
+                    </button>
+                  </div>
+                  {configError && (
+                    <div className="mb-4 p-4 bg-red-100 text-red-700 rounded">
+                      {configError}
+                    </div>
+                  )}
+                  <textarea
+                    className="w-full h-96 font-mono bg-gray-100 p-4 rounded mb-4"
+                    value={config}
+                    onChange={(e) => setConfig(e.target.value)}
+                  />
+                  <div className="flex gap-4 items-center">
+                    <button
+                      className="bg-blue-500 text-white px-4 py-2 rounded hover:bg-blue-600"
+                      onClick={saveConfig}
+                    >
+                      Save Config
+                    </button>
+                    {configStatus && <span className="text-sm text-green-500">{configStatus}</span>}
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </main>
-
-      {imageModalSrc && (
-        <div className="image-modal active">
-          <span className="close-modal" onClick={closeImageModal}>×</span>
-          <img src={imageModalSrc} className="modal-content" alt="Full view" />
-        </div>
-      )}
-
-      {pythonModalContent && (
-  <div className="python-modal active">
-    <div className="python-console">
-      <div className="close-modal" onClick={closePythonModal}>×</div>
-      <div className="python-output">
-        <pre>{pythonModalContent.code}</pre>
-        <div style={{ color: '#4CAF50', marginTop: '10px', marginBottom: '10px' }}>
-          &gt; Simulation run output results:
-        </div>
-        <pre style={{ color: '#f8f8f8' }}>{pythonModalContent.output}</pre>
-      </div>
     </div>
-  </div>
-)}
-    </>
   );
 };
 

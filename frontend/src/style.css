@@ -1,3 +1,30 @@
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes slideIn {
+  from { transform: translateX(20px); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease-out forwards;
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out forwards;
+}
+
+.delay-100 {
+  animation-delay: 100ms;
+}
+
+.delay-200 {
+  animation-delay: 200ms;
+}
+
 /* Tailwind Directives */
 @tailwind base;
 @tailwind components;
@@ -235,11 +262,52 @@
   }
 
   .result-panel {
-    @apply fixed top-[80px] right-[20px] w-[300px] max-h-[calc(100vh_-_100px)] overflow-y-auto bg-white z-[1000] transition-all duration-300 ease-in-out rounded-[8px] shadow-[0_4px_8px_rgba(0,0,0,0.2)];
+    width: 31%;
+    min-width: 380px;
+    height: calc(100vh - 120px);
+    position: fixed;
+    right: 10px;
+    top: 110px;
+    border-radius: 16px;
+    padding: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    background: linear-gradient(135deg, rgba(26, 27, 38, 0.95) 0%, rgba(36, 40, 59, 0.95) 100%);
+    backdrop-filter: blur(10px);
+    border: 1px solid rgba(122, 162, 247, 0.2);
+    box-shadow: 
+      0 4px 24px -1px rgba(0, 0, 0, 0.2),
+      0 0 16px -1px rgba(122, 162, 247, 0.15);
+    transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+    z-index: 10;
+    display: flex;
+    flex-direction: column;
   }
 
   .result-panel.hidden {
-    @apply transform translate-x-[100%] opacity-0 pointer-events-none;
+    transform: translateX(calc(100% + 10px));
+  }
+
+  .minimize-result {
+    display: inline-flex;
+    width: 28px;
+    height: 28px;
+    justify-content: center;
+    align-items: center;
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    transition: all 0.2s;
+    position: relative;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .minimize-result:hover {
+    background: rgba(255, 255, 255, 0.15);
+    transform: scale(1.05);
+    box-shadow: 0 0 10px rgba(0, 140, 255, 0.4);
   }
 
   .result-header {
