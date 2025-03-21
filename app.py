@@ -266,8 +266,9 @@ async def run_task(task_id: str, prompt: str):
                 elif "🏁 Special tool" in cleaned_message:
                     event_type, result = "complete", cleaned_message.replace("🏁 Special tool", "").strip()
                 elif "Browser state error" in cleaned_message:
-                    event_type, result = "error", cleaned_message
-                    await task_manager.fail_task(self.task_id, result)
+                    # Log but continue processing
+                    event_type, result = "info", cleaned_message
+                    await task_manager.update_task_step(self.task_id, step, result, event_type)
                     return
 
                 print(f"Emitting event: type={event_type}, result={result}")

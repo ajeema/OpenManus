@@ -52,8 +52,9 @@ const Chat = () => {
     }
 
     setSteps([]);
-    setResult(null);
-    setIsResultPanelVisible(false);
+    setResult("Processing request...");
+    setIsResultPanelVisible(true);
+    setIsResultPanelCollapsed(false);
 
     try {
       const response = await fetch(`${BACKEND_URL}/api/tasks`, {
@@ -76,10 +77,10 @@ const Chat = () => {
       }
     } catch (error) {
       const errorMessage = error.message || 'An unexpected error occurred';
-      setSteps([{ type: 'error', content: `❌ ${errorMessage}`, timestamp: new Date().toLocaleTimeString() }]);
-      setResult(errorMessage);
-      setIsResultPanelVisible(true);
+      setSteps(prev => [...prev, { type: 'error', content: `❌ ${errorMessage}`, timestamp: new Date().toLocaleTimeString() }]);
+      setResult(prev => `${prev}\n\nError: ${errorMessage}`);
       setCurrentTaskStatus('');
+      // Panel stays visible
     }
   };
 
@@ -129,29 +130,44 @@ const Chat = () => {
     });
 
     eventSource.addEventListener('error', (event) => {
-      const data = event.data ? JSON.parse(event.data) : {};
-      let errorMessage = data.message || 'An unexpected error occurred during task execution';
-      // Customize error messages for clarity
-      if (errorMessage.includes("No module named")) {
-        const match = errorMessage.match(/No module named '(\w+)'/);
-        const moduleName = match ? match[1] : 'unknown';
-        errorMessage = `Failed to execute Python code: The '${moduleName}' module is not installed.`;
-      } else if (errorMessage.includes("Task stuck in a loop")) {
-        errorMessage = "Task failed: The agent got stuck in a loop while trying to complete the task.";
-      }
-      const stepKey = `error-${errorMessage}`;
-      if (seenSteps.has(stepKey)) return;
-      seenSteps.add(stepKey);
+      try {
+        const data = event.data ? JSON.parse(event.data) : {};
+        console.warn('Error event received:', data);
 
-      setSteps(prev => [...prev, {
-        type: 'error',
-        content: `❌ ${errorMessage}`,
-        timestamp: new Date().toLocaleTimeString()
-      }]);
-      setResult(errorMessage);
-      setIsResultPanelVisible(true);
-      eventSource.close();
-      setCurrentTaskStatus('');
+        // For browser state errors or connection issues, continue
+        const errorMessage = data.message || data.result || '';
+        if (errorMessage.includes('Browser state error') || !event.data) {
+          const stepKey = `info-${Date.now()}`;
+          if (!seenSteps.has(stepKey)) {
+            seenSteps.add(stepKey);
+            setSteps(prev => [...prev, {
+              type: 'info',
+              content: 'Processing continues...',
+              timestamp: new Date().toLocaleTimeString()
+            }]);
+          }
+          // Don't close event source or hide panels
+          return;
+        }
+
+        // For other errors, add to steps but don't close connection
+        const stepKey = `error-${errorMessage}`;
+        if (!seenSteps.has(stepKey)) {
+          seenSteps.add(stepKey);
+          setSteps(prev => [...prev, {
+            type: 'error',
+            content: errorMessage,
+            timestamp: new Date().toLocaleTimeString()
+          }]);
+        }
+      } catch (e) {
+        console.error('Error parsing error event:', e);
+        setSteps(prev => [...prev, {
+          type: 'error',
+          content: event.data || 'An unexpected error occurred',
+          timestamp: new Date().toLocaleTimeString()
+        }]);
+      }
     });
 
     eventSource.addEventListener('status', (event) => {
