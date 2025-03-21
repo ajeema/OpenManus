@@ -2,10 +2,10 @@ import { useState, useRef, useEffect } from 'react';
 import Sidebar from '../components/Sidebar';
 import TaskArea from '../components/TaskArea';
 import ResultPanel from '../components/ResultPanel';
-import TaskStatus from '../components/TaskStatus'; // Added import
+import TaskStatus from '../components/TaskStatus';
 import '../style.css';
 
-const BACKEND_URL = 'http://0.0.0.0:8000';
+const BACKEND_URL = 'http://localhost:8000';
 
 const Chat = () => {
   const [tasks, setTasks] = useState([]);
@@ -17,12 +17,12 @@ const Chat = () => {
   const [activeTaskId, setActiveTaskId] = useState(null);
   const eventSourceRef = useRef(null);
   const stepsContainerRef = useRef(null);
-  const [showConfig, setShowConfig] = useState(false); 
-  const [config, setConfig] = useState(''); 
-  const [configError, setConfigError] = useState(''); 
-  const [configStatus, setConfigStatus] = useState(''); 
+  const [showConfig, setShowConfig] = useState(false);
+  const [config, setConfig] = useState('');
+  const [configError, setConfigError] = useState('');
+  const [configStatus, setConfigStatus] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [currentTaskStatus, setCurrentTaskStatus] = useState(''); 
+  const [currentTaskStatus, setCurrentTaskStatus] = useState('');
 
   useEffect(() => {
     loadHistory();
@@ -30,7 +30,7 @@ const Chat = () => {
 
   const loadHistory = async () => {
     try {
-      const response = await fetch(`${BACKEND_URL}/tasks`);
+      const response = await fetch(`${BACKEND_URL}/api/tasks`);
       if (!response.ok) {
         const errorText = await response.text();
         throw new Error(`Failed to load history: ${response.status} ${response.statusText} - ${errorText}`);
@@ -45,7 +45,7 @@ const Chat = () => {
 
   const createTask = async () => {
     if (!prompt.trim()) return;
-    setCurrentTaskStatus('creating'); 
+    setCurrentTaskStatus('creating');
 
     if (eventSourceRef.current) {
       eventSourceRef.current.close();
@@ -64,7 +64,7 @@ const Chat = () => {
 
       if (!response.ok) {
         const error = await response.json();
-        throw new Error(error.detail || 'Request failed');
+        throw new Error(error.detail || 'Failed to create task');
       }
 
       const data = await response.json();
@@ -73,32 +73,39 @@ const Chat = () => {
         setupSSE(data.task_id);
         loadHistory();
         setPrompt('');
-
       }
     } catch (error) {
-      setSteps([{ type: 'error', content: `Error: ${error.message}` }]);
-      setResult(error.message);
+      const errorMessage = error.message || 'An unexpected error occurred';
+      setSteps([{ type: 'error', content: `❌ ${errorMessage}`, timestamp: new Date().toLocaleTimeString() }]);
+      setResult(errorMessage);
       setIsResultPanelVisible(true);
-      setCurrentTaskStatus(''); 
+      setCurrentTaskStatus('');
     }
   };
 
   const setupSSE = (taskId) => {
-    const eventSource = new EventSource(`/tasks/${taskId}/events`);
+    const eventSource = new EventSource(`/api/tasks/${taskId}/events`);
     eventSourceRef.current = eventSource;
 
-    ['think', 'tool', 'act', 'log', 'run', 'message'].forEach(type => {
+    const seenSteps = new Set();
+
+    // Handle all event types
+    ['think', 'tool', 'act', 'log', 'run', 'message', 'step'].forEach(type => {
       eventSource.addEventListener(type, (event) => {
         const data = JSON.parse(event.data);
+        const stepKey = `${type}-${data.result || data.message}-${data.step || 0}`;
+        if (seenSteps.has(stepKey)) return;
+        seenSteps.add(stepKey);
+
         const newStep = {
           type,
-          content: data.result || data.message,
+          content: data.result || data.message || 'No content available',
           timestamp: new Date().toLocaleTimeString()
         };
         setSteps(prev => [...prev, newStep]);
 
         if (type === 'tool' || type === 'act') {
-          setResult(data.result);
+          setResult(data.result || 'Action completed');
           setIsResultPanelVisible(true);
         }
       });
@@ -106,26 +113,64 @@ const Chat = () => {
 
     eventSource.addEventListener('complete', (event) => {
       const data = JSON.parse(event.data);
+      const stepKey = `complete-${data.result || 'Task completed'}`;
+      if (seenSteps.has(stepKey)) return;
+      seenSteps.add(stepKey);
+
       setSteps(prev => [...prev, {
         type: 'complete',
-        content: '✅ Task completed',
+        content: '✅ Task completed successfully',
         timestamp: new Date().toLocaleTimeString()
       }]);
-      setResult(data.result);
+      setResult(data.result || 'Task completed');
       setIsResultPanelVisible(true);
       eventSource.close();
-      setCurrentTaskStatus(''); 
+      setCurrentTaskStatus('');
     });
 
     eventSource.addEventListener('error', (event) => {
+      const data = event.data ? JSON.parse(event.data) : {};
+      let errorMessage = data.message || 'An unexpected error occurred during task execution';
+      // Customize error messages for clarity
+      if (errorMessage.includes("No module named")) {
+        const match = errorMessage.match(/No module named '(\w+)'/);
+        const moduleName = match ? match[1] : 'unknown';
+        errorMessage = `Failed to execute Python code: The '${moduleName}' module is not installed.`;
+      } else if (errorMessage.includes("Task stuck in a loop")) {
+        errorMessage = "Task failed: The agent got stuck in a loop while trying to complete the task.";
+      }
+      const stepKey = `error-${errorMessage}`;
+      if (seenSteps.has(stepKey)) return;
+      seenSteps.add(stepKey);
+
       setSteps(prev => [...prev, {
         type: 'error',
-        content: `❌ Error: ${event.data}`,
+        content: `❌ ${errorMessage}`,
         timestamp: new Date().toLocaleTimeString()
       }]);
+      setResult(errorMessage);
       setIsResultPanelVisible(true);
       eventSource.close();
-      setCurrentTaskStatus(''); 
+      setCurrentTaskStatus('');
+    });
+
+    eventSource.addEventListener('status', (event) => {
+      const data = JSON.parse(event.data);
+      if (data.steps && Array.isArray(data.steps)) {
+        const newSteps = data.steps
+          .filter(step => {
+            const stepKey = `${step.type}-${step.result || step.message}-${step.step || 0}`;
+            if (seenSteps.has(stepKey)) return false;
+            seenSteps.add(stepKey);
+            return true;
+          })
+          .map(step => ({
+            type: step.type,
+            content: step.result || step.message || 'No content available',
+            timestamp: new Date().toLocaleTimeString()
+          }));
+        setSteps(prev => [...prev, ...newSteps]);
+      }
     });
   };
 
@@ -133,7 +178,7 @@ const Chat = () => {
     setConfigStatus('Saving...');
     setConfigError('');
     try {
-      const response = await fetch(`${BACKEND_URL}/config`, {
+      const response = await fetch(`${BACKEND_URL}/api/config`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -145,16 +190,15 @@ const Chat = () => {
         throw new Error(error.message || 'Failed to save config');
       }
       setConfigStatus('Config saved successfully!');
-      setTimeout(() => setConfigStatus(''), 3000); 
+      setTimeout(() => setConfigStatus(''), 3000);
     } catch (error) {
       setConfigError(`Failed to save config: ${error.message}`);
     }
   };
 
-
   return (
     <div className="flex h-screen bg-dark-bg text-editor-text overflow-hidden">
-      <Sidebar 
+      <Sidebar
         isOpen={isSidebarOpen}
         onClose={() => setIsSidebarOpen(false)}
         tasks={tasks}
@@ -170,9 +214,9 @@ const Chat = () => {
             ref={stepsContainerRef}
             className="h-full overflow-y-auto px-4 py-6 bg-editor-bg"
           />
-          <TaskStatus status={currentTaskStatus} /> {/* Displaying task status */}
+          <TaskStatus status={currentTaskStatus} />
           {isResultPanelVisible && (
-            <ResultPanel 
+            <ResultPanel
               result={result}
               isResultPanelCollapsed={isResultPanelCollapsed}
               setIsResultPanelCollapsed={setIsResultPanelCollapsed}

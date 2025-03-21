@@ -31,12 +31,18 @@ const Sidebar = ({ isOpen, onClose, tasks, activeTaskId, onTaskSelect, className
               w-full text-left p-4 hover:bg-editor-bg
               transition-colors border-b border-editor-border
               ${activeTaskId === task.id ? 'bg-editor-bg' : ''}
+              ${task.status.includes('failed') ? 'text-red-500' : ''}
             `}
           >
             <p className="truncate">{task.prompt}</p>
             <p className="text-sm text-gray-500 mt-1">
-              {new Date(task.timestamp).toLocaleString()}
+              {new Date(task.created_at).toLocaleTimeString()}
             </p>
+            {task.status.includes('failed') && (
+              <p className="text-sm text-red-500 mt-1 truncate">
+                Error: {task.status.split('failed: ')[1] || 'Unknown error'}
+              </p>
+            )}
           </button>
         ))}
       </div>
