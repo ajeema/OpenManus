@@ -3,9 +3,10 @@ import Sidebar from '../components/Sidebar';
 import TaskArea from '../components/TaskArea';
 import ResultPanel from '../components/ResultPanel';
 import TaskStatus from '../components/TaskStatus';
+
 import '../style.css';
 
-const BACKEND_URL = 'http://localhost:8000';
+const BACKEND_URL = 'http://localhost:8000';  // Local development URL
 
 const Chat = () => {
   const [tasks, setTasks] = useState([]);
@@ -23,6 +24,10 @@ const Chat = () => {
   const [configStatus, setConfigStatus] = useState('');
   const [prompt, setPrompt] = useState('');
   const [currentTaskStatus, setCurrentTaskStatus] = useState('');
+  let retryCount = 0;
+  const maxRetries = 3;
+  const retryDelay = 2000; // 2 seconds
+  let heartbeatTimer;
 
   useEffect(() => {
     loadHistory();
@@ -70,6 +75,7 @@ const Chat = () => {
 
       const data = await response.json();
       if (data.task_id) {
+        setActiveTaskId(data.task_id);
         setCurrentTaskStatus('running');
         setupSSE(data.task_id);
         loadHistory();
@@ -85,29 +91,50 @@ const Chat = () => {
   };
 
   const setupSSE = (taskId) => {
-    const eventSource = new EventSource(`/api/tasks/${taskId}/events`);
+    const eventSource = new EventSource(`${BACKEND_URL}/api/tasks/${taskId}/events`);
     eventSourceRef.current = eventSource;
+    retryCount = 0;
 
     const seenSteps = new Set();
 
+    eventSource.onerror = (error) => {
+      console.error('EventSource error:', error);
+      if (eventSource.readyState === EventSource.CLOSED) {
+        console.log('Connection was closed, retrying...');
+        setTimeout(() => {
+          setupSSE(taskId);
+        }, 2000);
+      }
+    };
+
     // Handle all event types
-    ['think', 'tool', 'act', 'log', 'run', 'message', 'step'].forEach(type => {
+    ['think', 'tool', 'act', 'log', 'run', 'message', 'step', 'planning', 'error', 'status'].forEach(type => {
       eventSource.addEventListener(type, (event) => {
-        const data = JSON.parse(event.data);
-        const stepKey = `${type}-${data.result || data.message}-${data.step || 0}`;
-        if (seenSteps.has(stepKey)) return;
-        seenSteps.add(stepKey);
+        try {
+          const data = JSON.parse(event.data);
+          const stepKey = `${type}-${data.result || data.message || ''}-${data.step || 0}`;
+          if (seenSteps.has(stepKey)) return;
+          seenSteps.add(stepKey);
 
-        const newStep = {
-          type,
-          content: data.result || data.message || 'No content available',
-          timestamp: new Date().toLocaleTimeString()
-        };
-        setSteps(prev => [...prev, newStep]);
+          const content = data.result || data.message || (data.status ? `Status: ${data.status}` : 'No content available');
+          const step = data.step !== undefined ? data.step : undefined;
 
-        if (type === 'tool' || type === 'act') {
-          setResult(data.result || 'Action completed');
-          setIsResultPanelVisible(true);
+          const newStep = {
+            type,
+            content,
+            step,
+            timestamp: new Date().toLocaleTimeString()
+          };
+
+          setSteps(prev => [...prev, newStep]);
+          setCurrentTaskStatus(data.status || 'processing');
+
+          if (['tool', 'act', 'complete', 'error'].includes(type)) {
+            setResult(content);
+            setIsResultPanelVisible(true);
+          }
+        } catch (error) {
+          console.error('Error handling event:', error);
         }
       });
     });
@@ -129,28 +156,96 @@ const Chat = () => {
       setCurrentTaskStatus('');
     });
 
+
+    const eventTypes = ['think', 'tool', 'act', 'log', 'run', 'message', 'step', 'status', 'planning'];
+
+    eventTypes.forEach(type => {
+      eventSource.addEventListener(type, (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          // Create unique key including step number if available
+          const stepKey = `${type}-${data.step || 0}-${data.result || data.message}`;
+
+          if (!seenSteps.has(stepKey)) {
+            seenSteps.add(stepKey);
+
+            // Process content based on event type
+            let content = data.result || data.message || 'No content available';
+            let icon = '💭';
+
+            switch(type) {
+              case 'think':
+                icon = '💭';
+                break;
+              case 'tool':
+                icon = '🛠️';
+                setResult(`Tool execution: ${content}`);
+                setIsResultPanelVisible(true);
+                break;
+              case 'act':
+                icon = '🎯';
+                setResult(`Action completed: ${content}`);
+                setIsResultPanelVisible(true);
+                break;
+              case 'planning':
+                icon = '📋';
+                break;
+              case 'status':
+                icon = '📊';
+                if (data.token_usage) {
+                  content = `Token usage - Input: ${data.token_usage.input}, Completion: ${data.token_usage.completion}, Total: ${data.token_usage.total}`;
+                }
+                if (data.execution_time) {
+                  content += `\nExecution time: ${data.execution_time.toFixed(2)}s`;
+                }
+                break;
+              case 'step':
+                icon = '📍';
+                break;
+              default:
+                icon = '📝';
+            }
+
+            setSteps(prev => [...prev, {
+              type,
+              icon,
+              content,
+              step: data.step,
+              timestamp: new Date().toLocaleTimeString()
+            }]);
+          }
+        } catch (e) {
+          console.error(`Error processing ${type} event:`, e);
+        }
+      });
+    });
+
     eventSource.addEventListener('error', (event) => {
+      clearInterval(heartbeatTimer);
       try {
         const data = event.data ? JSON.parse(event.data) : {};
         console.warn('Error event received:', data);
 
-        // For browser state errors or connection issues, continue
-        const errorMessage = data.message || data.result || '';
-        if (errorMessage.includes('Browser state error') || !event.data) {
-          const stepKey = `info-${Date.now()}`;
-          if (!seenSteps.has(stepKey)) {
-            seenSteps.add(stepKey);
+        if (eventSource.readyState === EventSource.CLOSED) {
+          if (retryCount < maxRetries) {
+            retryCount++;
             setSteps(prev => [...prev, {
-              type: 'info',
-              content: 'Processing continues...',
+              type: 'warning',
+              content: `Connection lost, retrying in ${retryDelay/1000} seconds (${retryCount}/${maxRetries})...`,
+              timestamp: new Date().toLocaleTimeString()
+            }]);
+            setTimeout(setupSSE, retryDelay, taskId);
+          } else {
+            setSteps(prev => [...prev, {
+              type: 'error',
+              content: 'Connection lost, please refresh the page',
               timestamp: new Date().toLocaleTimeString()
             }]);
           }
-          // Don't close event source or hide panels
           return;
         }
 
-        // For other errors, add to steps but don't close connection
+        const errorMessage = data.message || data.result || '';
         const stepKey = `error-${errorMessage}`;
         if (!seenSteps.has(stepKey)) {
           seenSteps.add(stepKey);
@@ -172,6 +267,18 @@ const Chat = () => {
 
     eventSource.addEventListener('status', (event) => {
       const data = JSON.parse(event.data);
+      if (data.token_usage) {
+        setTasks(prev => prev.map(task =>
+          task.id === taskId ? {
+            ...task,
+            token_usage: {
+              input: data.token_usage.total_input_tokens || 0,
+              completion: data.token_usage.total_completion_tokens || 0,
+              total: (data.token_usage.total_input_tokens || 0) + (data.token_usage.total_completion_tokens || 0)
+            }
+          } : task
+        ));
+      }
       if (data.steps && Array.isArray(data.steps)) {
         const newSteps = data.steps
           .filter(step => {
@@ -225,23 +332,35 @@ const Chat = () => {
 
       <main className="flex-1 flex flex-col h-full">
         <div className="flex-1 overflow-hidden relative">
-          <TaskArea
-            steps={steps}
-            ref={stepsContainerRef}
-            className="h-full overflow-y-auto px-4 py-6 bg-editor-bg"
-          />
-          <TaskStatus status={currentTaskStatus} />
+          <div className="flex flex-col h-full">
+            <div className="flex-1 overflow-y-auto">
+              <TaskArea
+                ref={stepsContainerRef}
+                steps={steps}
+                taskId={activeTaskId}
+                className="flex-1 overflow-y-auto"
+              />
+            </div>
+            <div className="border-t border-editor-border p-4 bg-editor-bg">
+              <div className="flex items-center gap-4">
+                  <TaskStatus status={currentTaskStatus} />
+                </div>
+            </div>
+          </div>
           {isResultPanelVisible && (
             <ResultPanel
               result={result}
               isResultPanelCollapsed={isResultPanelCollapsed}
               setIsResultPanelCollapsed={setIsResultPanelCollapsed}
+              tokenUsage={tasks.find(t => t.id === activeTaskId)?.token_usage}
+              taskId={activeTaskId}
             />
           )}
         </div>
 
         <div className="border-t border-editor-border bg-editor-surface p-4">
-          <div className="max-w-4xl mx-auto flex gap-4 items-center">
+          <div className="max-w-4xl mx-auto flex flex-col gap-2">
+            <div className="flex gap-4 items-center">
             <input
               type="text"
               placeholder="Type your question here..."
@@ -255,9 +374,10 @@ const Chat = () => {
             >
               Send
             </button>
+            </div>
             <button
               onClick={() => setShowConfig(!showConfig)}
-              className="absolute top-4 right-4 text-gray-400 hover:text-white transition-colors"
+              className="text-gray-400 hover:text-white transition-colors"
               aria-label="Settings"
             >
               <i className="fas fa-cog text-2xl"></i>

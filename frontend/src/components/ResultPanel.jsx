@@ -1,8 +1,10 @@
-const ResultPanel = ({ result, isResultPanelCollapsed, setIsResultPanelCollapsed, className = '' }) => {
+import PlanDisplay from './PlanDisplay';
+
+const ResultPanel = ({ result, isResultPanelCollapsed, setIsResultPanelCollapsed, tokenUsage, className = '', taskId }) => {
   if (isResultPanelCollapsed) {
     return (
-      <div 
-        className="fixed bottom-4 right-4 cursor-pointer hover:scale-105 transition-transform" 
+      <div
+        className="fixed bottom-4 right-4 cursor-pointer hover:scale-105 transition-transform"
         onClick={() => setIsResultPanelCollapsed(false)}
         style={{
           background: 'linear-gradient(135deg, #1a1b26 0%, #24283b 100%)',
@@ -29,15 +31,33 @@ const ResultPanel = ({ result, isResultPanelCollapsed, setIsResultPanelCollapsed
     <div className={`result-panel ${className}`}>
       <div className="py-4 px-6 border-b border-gray-700/50">
         <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-3">
-            <div className="flex space-x-1">
-              <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
-              <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse delay-100"></div>
-              <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse delay-200"></div>
+          <div className="flex items-center justify-between flex-1 mr-4">
+            <div className="flex items-center space-x-3">
+              <div className="flex space-x-1">
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse"></div>
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse delay-100"></div>
+                <div className="w-2 h-2 bg-blue-400 rounded-full animate-pulse delay-200"></div>
+              </div>
+              <h2 className="text-white text-lg font-medium">Manus Computer</h2>
             </div>
-            <h2 className="text-white text-lg font-medium">Manus Computer</h2>
+            <div className="flex items-center gap-4 text-sm text-gray-400">
+              <div className="flex items-center gap-2">
+                <span>Input:</span>
+                <span className="text-blue-400">{tokenUsage?.total_input_tokens || 0}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>Output:</span>
+                <span className="text-blue-400">{tokenUsage?.total_completion_tokens || 0}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <span>Total:</span>
+                <span className="text-blue-400">
+                  {(tokenUsage?.total_input_tokens || 0) + (tokenUsage?.total_completion_tokens || 0)}
+                </span>
+              </div>
+            </div>
           </div>
-          <button 
+          <button
             className="p-2 hover:bg-gray-700/30 rounded-lg transition-colors"
             onClick={() => setIsResultPanelCollapsed(true)}
             aria-label="Collapse"
@@ -52,6 +72,7 @@ const ResultPanel = ({ result, isResultPanelCollapsed, setIsResultPanelCollapsed
         </div>
       </div>
       <div className="flex-1 overflow-auto p-6">
+        <PlanDisplay taskId={taskId} />
         <div className="prose prose-invert max-w-none">
           <pre className="whitespace-pre-wrap break-words text-gray-300 font-mono text-sm leading-relaxed">
             {result}

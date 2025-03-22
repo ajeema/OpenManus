@@ -36,6 +36,7 @@ app.add_middleware(
 FRONTEND_URL = "http://localhost:3000"
 BACKEND_API_PREFIX = "/api"
 
+
 # Task Model
 class Task(BaseModel):
     id: str
@@ -43,13 +44,14 @@ class Task(BaseModel):
     created_at: datetime
     status: str
     steps: List[Dict] = []
-    token_usage: Dict[str, int] = {"input": 0, "completion": 0, "total": 0}
+    token_usage: Dict[str, int] = {"total_input_tokens": 0, "total_completion_tokens": 0}
     execution_time: float = 0.0
 
     def model_dump(self, *args, **kwargs):
         data = super().model_dump(*args, **kwargs)
         data["created_at"] = self.created_at.isoformat()
         return data
+
 
 # Task Manager
 class TaskManager:
@@ -73,7 +75,7 @@ class TaskManager:
 
     async def update_token_usage(self, task_id: str, token_usage: Dict[str, int]):
         if task_id in self.tasks:
-            self.tasks[task_id].token_usage.update(token_usage)
+            self.tasks[task_id].token_usage = token_usage
             await self._update_status(task_id)
 
     async def update_execution_time(self, task_id: str, execution_time: float):
@@ -102,7 +104,9 @@ class TaskManager:
             "execution_time": task.execution_time,
         })
 
+
 task_manager = TaskManager()
+
 
 # API Endpoints
 @app.get("/download")
@@ -111,6 +115,7 @@ async def download_file(file_path: str):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path, filename=os.path.basename(file_path))
+
 
 @app.post("/api/tasks")
 async def create_task(prompt: str = Body(..., embed=True)):
@@ -125,11 +130,13 @@ async def create_task(prompt: str = Body(..., embed=True)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
 
+
 @app.get("/api/tasks")
 async def get_tasks():
     """Retrieve all tasks sorted by creation date."""
     sorted_tasks = sorted(task_manager.tasks.values(), key=lambda task: task.created_at, reverse=True)
     return JSONResponse(content=[task.model_dump() for task in sorted_tasks])
+
 
 @app.get("/api/tasks/{task_id}")
 async def get_task(task_id: str):
@@ -138,13 +145,105 @@ async def get_task(task_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
     return task_manager.tasks[task_id]
 
+
+@app.get("/api/tasks/{task_id}/plan")
+async def get_task_plan(task_id: str):
+    """Retrieve the current plan for a task."""
+    if task_id not in task_manager.tasks:
+        raise HTTPException(status_code=404, detail="Task not found")
+
+    task = task_manager.tasks[task_id]
+    from app.flow.planning import PlanningFlow
+    from app.agent.manus import Manus
+    from app.flow.flow_factory import FlowFactory
+    from app.flow.base import FlowType
+
+    agents = {"manus": Manus()}
+    flow = FlowFactory.create_flow(flow_type=FlowType.PLANNING, agents=agents)
+
+    # Create a plan based on the task request
+    from app.schema import Message
+
+    agents = {"manus": Manus()}
+    flow = FlowFactory.create_flow(flow_type=FlowType.PLANNING, agents=agents)
+
+    # Generate a context-aware plan using the LLM
+    system_message = Message.system_message(
+        "You are a planning assistant. Create a concise, actionable plan with clear steps. "
+        "Focus on key milestones rather than detailed sub-steps. "
+        "Analyze the request and create steps that are appropriate for the specific task."
+    )
+
+    user_message = Message.user_message(
+        f"Create a reasonable plan with clear steps to accomplish this task: {task.prompt}"
+    )
+
+    # Get plan steps from LLM
+    response = await flow.llm.ask(
+        messages=[user_message],
+        system_msgs=[system_message]
+    )
+
+    # Extract steps from response string
+    steps = [step.strip() for step in response.split('\n') if step.strip()]
+
+    # Create the plan with generated steps
+    await flow.planning_tool.execute(
+        command="create",
+        plan_id=flow.active_plan_id,
+        title=f"Plan for: {task.prompt}",
+        steps=steps
+    )
+
+    # Create event handler for plan progress
+    @app.post("/api/tasks/{task_id}/mark_step")
+    async def mark_plan_step(task_id: str, step_index: int, status: str):
+        if task_id not in task_manager.tasks:
+            raise HTTPException(status_code=404, detail="Task not found")
+
+        try:
+            flow = FlowFactory.create_flow(flow_type=FlowType.PLANNING, agents={"manus": Manus()})
+            result = await flow.planning_tool.execute(
+                command="mark_step",
+                plan_id=flow.active_plan_id,
+                step_index=step_index,
+                step_status=status
+            )
+            return {"success": True, "plan": result.output}
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=str(e))
+
+    if flow.planning_tool and flow.active_plan_id:
+        return flow.planning_tool.plans.get(flow.active_plan_id, {"error": "No active plan found"})
+    return {"error": "No active plan found"}
+
+
 @app.get("/api/tasks/{task_id}/events")
 async def task_events(task_id: str):
     """Stream task events via Server-Sent Events (SSE)."""
+
     async def event_generator():
         if task_id not in task_manager.queues:
             yield f"event: error\ndata: {dumps({'message': 'Task not found'})}\n\n"
             return
+
+        # Mark first step as in progress
+        from app.flow.base import FlowType
+        from app.flow.flow_factory import FlowFactory
+        from app.agent.manus import Manus
+
+        agents = {"manus": Manus()}
+        flow = FlowFactory.create_flow(flow_type=FlowType.PLANNING, agents=agents)
+
+        try:
+            await flow.planning_tool.execute(
+                command="mark_step",
+                plan_id=flow.active_plan_id,
+                step_index=0,
+                step_status="in_progress"
+            )
+        except Exception as e:
+            print(f"Error marking step: {e}")
 
         queue = task_manager.queues[task_id]
         task = task_manager.tasks.get(task_id)
@@ -178,6 +277,7 @@ async def task_events(task_id: str):
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
+
 @app.get("/api/config")
 async def get_config():
     """Retrieve the configuration file content."""
@@ -201,6 +301,7 @@ async def get_config():
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to read config: {str(e)}"})
 
+
 @app.post("/api/config")
 async def save_config(request: Request):
     """Save the configuration file content."""
@@ -213,6 +314,7 @@ async def save_config(request: Request):
         return JSONResponse({"status": "success"})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save config: {str(e)}")
+
 
 # Task Execution
 async def run_task(task_id: str, prompt: str):
@@ -229,14 +331,31 @@ async def run_task(task_id: str, prompt: str):
         )
         print("Manus agent initialized")
 
-        async def on_think(thought): await task_manager.update_task_step(task_id, 0, thought, "think")
-        async def on_tool_execute(tool, input): await task_manager.update_task_step(task_id, 0, f"Executing tool: {tool}\nInput: {input}", "tool")
-        async def on_action(action): await task_manager.update_task_step(task_id, 0, f"Executing action: {action}", "act")
-        async def on_run(step, result): await task_manager.update_task_step(task_id, step, result, "run")
+        async def on_think(thought):
+            await task_manager.update_task_step(task_id, 0, thought, "think")
+            await task_manager.queues[task_id].put({"type": "think", "result": thought})
+
+        async def on_tool_execute(tool, input):
+            message = f"Executing tool: {tool}\nInput: {input}"
+            await task_manager.update_task_step(task_id, 0, message, "tool")
+            await task_manager.queues[task_id].put({"type": "tool", "result": message})
+
+        async def on_action(action):
+            message = f"Executing action: {action}"
+            await task_manager.update_task_step(task_id, 0, message, "act")
+            await task_manager.queues[task_id].put({"type": "act", "result": message})
+
+        async def on_run(step, result):
+            await task_manager.update_task_step(task_id, step, result, "run")
+            await task_manager.queues[task_id].put({"type": "run", "step": step, "result": result})
+
+        async def on_planning(plan):
+            await task_manager.queues[task_id].put({"type": "planning", "result": plan})
 
         from app.logger import logger
         class SSELogHandler:
-            def __init__(self, task_id): self.task_id = task_id
+            def __init__(self, task_id):
+                self.task_id = task_id
 
             async def __call__(self, message):
                 import re
@@ -248,21 +367,36 @@ async def run_task(task_id: str, prompt: str):
                 elif "🛠️ Manus selected" in cleaned_message:
                     event_type = "tool"
                 elif "🎯 Tool" in cleaned_message:
-                    event_type, result = "act", cleaned_message.replace("🎯 Tool 'browser_use' completed its mission! Result: ", "").strip()
+                    event_type, result = "act", cleaned_message.replace(
+                        "🎯 Tool 'browser_use' completed its mission! Result: ", "").strip()
                     # Check for specific browser_use error and fail the task
                     if "net::ERR_NAME_NOT_RESOLVED" in result:
                         error_message = f"Failed to navigate to URL: {result}"
                         await task_manager.fail_task(self.task_id, error_message)
                         return
                 elif "Token usage:" in cleaned_message:
-                    match = re.search(r"Input=(\d+), Completion=(\d+),.*Total=(\d+)", cleaned_message)
+                    match = re.search(r"Input=(\d+), Completion=(\d+)", cleaned_message)
                     if match:
+                        input_tokens = int(match.group(1))
+                        completion_tokens = int(match.group(2))
                         await task_manager.update_token_usage(self.task_id, {
-                            "input": int(match.group(1)), "completion": int(match.group(2)), "total": int(match.group(3))
+                            "total_input_tokens": input_tokens,
+                            "total_completion_tokens": completion_tokens,
+                            "total": input_tokens + completion_tokens
+                        })
+                        await task_manager.queues[self.task_id].put({
+                            "type": "status",
+                            "token_usage": {
+                                "total_input_tokens": input_tokens,
+                                "total_completion_tokens": completion_tokens,
+                                "total": input_tokens + completion_tokens
+                            }
                         })
                     return
                 elif "📝 Oops!" in cleaned_message:
                     event_type, result = "error", cleaned_message.replace("📝 Oops!", "").strip()
+                elif "📋 Planning:" in cleaned_message:
+                    event_type, result = "planning", cleaned_message.replace("📋 Planning:", "").strip()
                 elif "🏁 Special tool" in cleaned_message:
                     event_type, result = "complete", cleaned_message.replace("🏁 Special tool", "").strip()
                 elif "Browser state error" in cleaned_message:
@@ -286,6 +420,7 @@ async def run_task(task_id: str, prompt: str):
         print(f"Task {task_id} failed: {error_message}")
         await task_manager.fail_task(task_id, error_message)
 
+
 # Frontend Proxying
 async def check_frontend_health(url: str) -> bool:
     """Check if the frontend server is available."""
@@ -295,6 +430,7 @@ async def check_frontend_health(url: str) -> bool:
             return response.status_code == 200
         except httpx.RequestError:
             return False
+
 
 def frontend_not_available_response(path: str) -> HTMLResponse:
     """Return an HTML response when the frontend is unavailable."""
@@ -315,13 +451,14 @@ def frontend_not_available_response(path: str) -> HTMLResponse:
         status_code=503
     )
 
+
 @app.get("/{path:path}")
 async def proxy_to_frontend_get(path: str, request: Request):
     """Proxy GET requests to the frontend, excluding backend API routes."""
     backend_api_routes = ["/api/tasks", "/api/config", "/tasks", "/download"]
     normalized_path = path.rstrip('/')
     if normalized_path.startswith(BACKEND_API_PREFIX.lstrip("/")) or any(
-        normalized_path == route.lstrip("/").rstrip("/") for route in backend_api_routes
+            normalized_path == route.lstrip("/").rstrip("/") for route in backend_api_routes
     ):
         raise HTTPException(status_code=404, detail="Not found")
 
@@ -347,13 +484,14 @@ async def proxy_to_frontend_get(path: str, request: Request):
             print(f"Error proxying GET to frontend: {str(e)}")
             return frontend_not_available_response(path)
 
+
 @app.post("/{path:path}")
 async def proxy_to_frontend_post(path: str, request: Request):
     """Proxy POST requests to the frontend, excluding backend API routes."""
     backend_api_routes = ["/api/tasks", "/api/config", "/tasks", "/download"]
     normalized_path = path.rstrip('/')
     if normalized_path.startswith(BACKEND_API_PREFIX.lstrip("/")) or any(
-        normalized_path == route.lstrip("/").rstrip("/") for route in backend_api_routes
+            normalized_path == route.lstrip("/").rstrip("/") for route in backend_api_routes
     ):
         raise HTTPException(status_code=404, detail="Not found")
 
@@ -380,6 +518,7 @@ async def proxy_to_frontend_post(path: str, request: Request):
             print(f"Error proxying POST to frontend: {str(e)}")
             return frontend_not_available_response(path)
 
+
 # Exception Handling
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
@@ -387,10 +526,12 @@ async def generic_exception_handler(request: Request, exc: Exception):
     print(f"Unhandled server error: {str(exc)}")
     return JSONResponse(status_code=500, content={"message": f"Server error: {str(exc)}", "path": request.url.path})
 
+
 # Startup Configuration
 def open_local_browser(config):
     """Open the app in the default browser after startup."""
     webbrowser.open_new_tab(f"http://{config['host']}:{config['port']}/")
+
 
 def load_config():
     """Load configuration from config.toml or use defaults."""
@@ -406,8 +547,10 @@ def load_config():
         print(f"Config error: {str(e)}, using defaults: host=127.0.0.1, port=8000")
         return {"host": "127.0.0.1", "port": 8000}
 
+
 if __name__ == "__main__":
     import uvicorn
+
     config = load_config()
     if config["port"] == 11434:  # Avoid conflict with Ollama
         print("Port 11434 in use, switching to 8000")
