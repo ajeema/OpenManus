@@ -1,4 +1,3 @@
-
 @keyframes fadeIn {
   from { opacity: 0; transform: translateY(10px); }
   to { opacity: 1; transform: translateY(0); }
@@ -48,11 +47,11 @@
   }
 
   .chat-container {
-    @apply flex-1 flex flex-col gap-3 min-w-0 max-h-[calc(100vh-4rem)] bg-dark-surface rounded-xl shadow-lg;
+    @apply flex-1 flex flex-col gap-3 min-w-0 max-h-[calc(100vh-4rem)] bg-dark-surface rounded-xl shadow-lg transition-all duration-300;
   }
 
-  .message-container {
-    @apply bg-dark-surface rounded-xl p-6 mt-0 flex-1 overflow-y-auto border border-editor-border;
+  .chat-container.with-manus {
+    @apply mr-[380px];
   }
 
   .message-container {
@@ -276,7 +275,7 @@
     background: linear-gradient(135deg, rgba(26, 27, 38, 0.95) 0%, rgba(36, 40, 59, 0.95) 100%);
     backdrop-filter: blur(10px);
     border: 1px solid rgba(122, 162, 247, 0.2);
-    box-shadow: 
+    box-shadow:
       0 4px 24px -1px rgba(0, 0, 0, 0.2),
       0 0 16px -1px rgba(122, 162, 247, 0.15);
     transition: all 0.4s cubic-bezier(0.4, 0, 0.2, 1);
@@ -363,6 +362,35 @@
   .scrollbar-thin::-webkit-scrollbar-thumb:hover {
     background-color: rgb(107, 114, 128);
   }
+
+
+  @keyframes thinking-dot {
+    0%, 20% { transform: translateY(0); }
+    50% { transform: translateY(-5px); }
+    80%, 100% { transform: translateY(0); }
+  }
+
+  .thinking {
+    @apply flex items-center gap-2 p-4 bg-dark-surface/50 rounded-lg;
+  }
+
+  .thinking-dots {
+    @apply flex gap-1;
+  }
+
+  .thinking-dot {
+    @apply w-2 h-2 bg-blue-500 rounded-full;
+    animation: thinking-dot 1.4s infinite;
+  }
+
+  .thinking-dot:nth-child(2) {
+    animation-delay: 0.2s;
+  }
+
+  .thinking-dot:nth-child(3) {
+    animation-delay: 0.4s;
+  }
+
 }
 
 @media (max-width: 768px) {

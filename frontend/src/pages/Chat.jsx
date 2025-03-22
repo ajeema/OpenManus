@@ -8,6 +8,37 @@ import '../style.css';
 
 const BACKEND_URL = 'http://localhost:8000';  // Local development URL
 
+const ThinkingAnimation = () => (
+  <div className="thinking">
+    <span className="text-gray-400">Thinking</span>
+    <div className="thinking-dots">
+      <div className="thinking-dot"></div>
+      <div className="thinking-dot"></div>
+      <div className="thinking-dot"></div>
+    </div>
+  </div>
+);
+
+const renderMessage = (message) => {
+  const isThinking = message.content.includes('<think>') && message.content.includes('</think>');
+
+  if (isThinking) {
+    const thinkContent = message.content.split('<think>')[1].split('</think>')[0];
+    return (
+      <div className="flex flex-col gap-2">
+        <ThinkingAnimation />
+        <div className="text-gray-400 italic">{thinkContent}</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className={`message ${message.type === 'user' ? 'user-message' : 'assistant-message'}`}>
+      {message.content}
+    </div>
+  );
+};
+
 const Chat = () => {
   const [tasks, setTasks] = useState([]);
   const [steps, setSteps] = useState([]);
@@ -336,7 +367,10 @@ const Chat = () => {
             <div className="flex-1 overflow-y-auto">
               <TaskArea
                 ref={stepsContainerRef}
-                steps={steps}
+                steps={steps.map(step => ({
+                  ...step,
+                  content: renderMessage({ type: step.type, content: step.content })
+                }))}
                 taskId={activeTaskId}
                 className="flex-1 overflow-y-auto"
               />

@@ -24,15 +24,8 @@ from app.schema import Message
 from app.logger import logger
 from app.flow.planning import PlanningFlow
 from app.agent.manus import Manus
-from app.flow.flow_factory import FlowFactory
-from app.flow.base import FlowType
-
+from app.flow.flow_factory import FlowFactory, FlowType
 import httpx
-from fastapi import Body, FastAPI, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse, HTMLResponse
-from pydantic import BaseModel
-from tenacity import retry, stop_after_attempt, wait_fixed, retry_if_exception_type
 
 app = FastAPI(
     title="Manus Backend",
@@ -161,6 +154,8 @@ class TaskManager:
     def create_task(self, prompt: str) -> Task:
         task_id = str(uuid.uuid4())
         project_path = self.file_manager.create_project_dir(task_id)
+        # Create basic folder structure
+        self.file_manager.create_folder_structure(project_path, {"src": [], "tests": [], "docs": [], "config": [], "assets": [], "static": [], "utils": []})
         task = Task(
             id=task_id,
             prompt=prompt,
@@ -261,11 +256,6 @@ async def get_task_plan(task_id: str):
         raise HTTPException(status_code=404, detail="Task not found")
 
     task = task_manager.tasks[task_id]
-    from app.flow.planning import PlanningFlow
-    from app.agent.manus import Manus
-    from app.flow.flow_factory import FlowFactory
-    from app.flow.base import FlowType
-
     agents = {"manus": Manus()}
     flow = FlowFactory.create_flow(flow_type=FlowType.PLANNING, agents=agents)
 
@@ -398,19 +388,22 @@ async def run_task(task_id: str, prompt: str):
         await task_manager._update_status(task_id)
 
         # Step 1: Initialize Agents and Flow
-        from app.agent.manus import Manus
         from app.agent.swe import SWEAgent
         from app.agent.browser import BrowserAgent
         from app.agent.planning import PlanningAgent
-        from app.flow.flow_factory import FlowFactory
-        from app.flow.base import FlowType
+        from app.agent.cot import CoTAgent
 
-        # Agent selection
+        # Agent selection with CoT support
         prompt_lower = prompt.lower()
         active_agents = {}
         task_needs = {}
 
-        if any(keyword in prompt_lower for keyword in ['code', 'program', 'implement', 'write']):
+        # Add CoT agent for tasks requiring complex reasoning
+        if any(keyword in prompt_lower for keyword in ['explain', 'reason', 'analyze', 'think', 'understand']):
+            agent = CoTAgent(name="CoT", description="A reasoning-focused agent using Chain of Thought")
+            active_agents['cot'] = agent
+            task_needs['reasoning'] = True
+        elif any(keyword in prompt_lower for keyword in ['code', 'program', 'implement', 'write']):
             agent = SWEAgent(name="SWE", description="A software engineering agent focused on coding tasks")
             active_agents['swe'] = agent
             task_needs['code'] = True
@@ -463,57 +456,7 @@ async def run_task(task_id: str, prompt: str):
         await task_manager.update_plan_step(task_id, 0, "completed", "Plan created")
         await task_manager._update_status(task_id)
 
-        # Step 4: Create Folder Structure
-        task_workspace = task_manager.tasks[task_id].project_path
-        structure_prompt = f"""
-        Create a JSON object for a project folder structure based on this request: {prompt}
-        The primary programming language is: {language}
-
-        Rules:
-        1. Response must be valid JSON
-        2. Each key is a folder name
-        3. Each value is either a string description or nested object
-        4. No comments or extra text
-
-        Example format:
-        {{
-            "src": "Source code files",
-            "docs": {{
-                "api": "API documentation",
-                "guides": "User guides"
-            }}
-        }}
-        """
-        try:
-            structure_response = await llm.ask(
-                messages=[Message.user_message(structure_prompt)],
-                system_msgs=[Message.system_message(
-                    "You are a project architect that outputs only valid JSON folder structures."
-                )],
-                temperature=0.1
-            )
-            cleaned_response = structure_response.strip()
-            if not cleaned_response.startswith('{'):
-                cleaned_response = cleaned_response[cleaned_response.find('{'):]
-            if not cleaned_response.endswith('}'):
-                cleaned_response = cleaned_response[:cleaned_response.rfind('}') + 1]
-            folders = json.loads(cleaned_response)
-        except Exception as e:
-            logger.error(f"Failed to get folder structure from LLM: {e}")
-            folders = {
-                "src": "Source code files",
-                "tests": "Test files",
-                "docs": "Documentation",
-                "config": "Configuration files",
-                "assets": "Static assets",
-                "static": "Static files (HTML, CSS)" if language == "javascript" else "Static files"
-            }
-
-        task_manager.file_manager.create_folder_structure(task_workspace, folders)
-        await task_manager.update_task_step(task_id, 0, "Created project folder structure", "log")
-        task_manager.task_files[task_id].extend([os.path.join(task_workspace, folder) for folder in folders.keys()])
-
-        # Step 5: Execute the Plan
+        # Step 4: Execute the Plan with enhanced reasoning
         action_history = []
         MAX_RETRIES = 3
         dependencies = []  # Track dependencies for documentation
@@ -521,7 +464,23 @@ async def run_task(task_id: str, prompt: str):
         for step in task_manager.tasks[task_id].plan.steps:
             step_id = step.id
             await task_manager.update_plan_step(task_id, step_id, "running")
-            await task_manager.update_task_step(task_id, step_id, f"Executing step {step_id}: {step.description}", "log")
+
+            # Use CoT for step analysis
+            if 'cot' in active_agents:
+                cot_analysis = await active_agents['cot'].run(f"Analyze step: {step.description}")
+                await task_manager.update_task_step(
+                    task_id,
+                    step_id,
+                    f"Chain of Thought Analysis:\n{cot_analysis}\n\nExecuting step {step_id}: {step.description}",
+                    "think"
+                )
+            else:
+                await task_manager.update_task_step(
+                    task_id,
+                    step_id,
+                    f"Executing step {step_id}: {step.description}",
+                    "log"
+                )
 
             success, step_deps = await execute_step(agent, task_id, step, task_manager.file_manager, active_agents, prompt, language)
             if not success:
@@ -538,12 +497,12 @@ async def run_task(task_id: str, prompt: str):
             dependencies.extend(step_deps)
             await task_manager.update_plan_step(task_id, step_id, "completed", "Step completed successfully")
 
-        # Step 6: Finalize and Document
+        # Step 5: Finalize and Document
         doc_content = [
             "# Project Documentation\n",
             f"## Overview\n{prompt}\n",
             "## Structure\n",
-            "\n".join([f"- {folder}" for folder in folders.keys()]),
+            "\n".join([f"- {os.path.basename(path)}" for path in task_manager.task_files[task_id]]),
             "## Requirements\n",
             f"### Language\n- {language.capitalize()}\n",
             "### Dependencies\n",
@@ -555,7 +514,7 @@ async def run_task(task_id: str, prompt: str):
             f"   - For JavaScript: `npm install` (see `package.json`)\n" if language == "javascript" and dependencies else "",
             "## Setup Instructions\n",
             f"1. Clone or download this project.\n",
-            f"2. Navigate to the project directory: `cd {task_workspace}`\n",
+            f"2. Navigate to the project directory: `cd {task_manager.tasks[task_id].project_path}`\n",
             f"3. Install dependencies as listed above.\n",
             "## Usage\n",
             f"1. Run the main script:\n",
@@ -566,7 +525,7 @@ async def run_task(task_id: str, prompt: str):
             f"   - For Python: `pytest tests/`\n" if language == "python" else "",
             f"   - For JavaScript: `npm test`\n" if language == "javascript" else "",
         ]
-        doc_path = os.path.join(task_workspace, "README.md")
+        doc_path = os.path.join(task_manager.tasks[task_id].project_path, "README.md")
         with open(doc_path, "w") as f:
             f.write("\n".join(doc_content))
         await task_manager.track_file(task_id, doc_path)
@@ -576,8 +535,8 @@ async def run_task(task_id: str, prompt: str):
 
         if hasattr(agent, 'llm') and hasattr(agent.llm, 'total_tokens'):
             await task_manager.update_token_usage(task_id, {
-                "total_input_tokens": agent.llm.input_tokens,
-                "total_completion_tokens": agent.llm.completion_tokens,
+                "total_input_tokens": agent.llm.total_input_tokens,
+                "total_completion_tokens": agent.llm.total_completion_tokens,
                 "total": agent.llm.total_tokens
             })
 
@@ -700,17 +659,12 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
 
     elif action_type == "generate_code":
         try:
-            code_prompt = f"""
-            Based on the task: '{prompt}', the step: '{step.description}', and the language: '{language}',
+            observation = ""
+            code_prompt = f"""Based on the task: '{prompt}', the step: '{step.description}', and the language: '{language}',
             determine the appropriate filename and content for the code to be generated.
             Respond with a JSON object in the following format:
-            {{
-                "filename": "example.{language == 'python' and 'py' or 'js'}",
-                "content": "print('Hello, World!')"
-            }}
-            """
-            code_response = await llm.ask(
-                messages=[Message.user_message(code_prompt)],
+            {{"filename": "`example.{language == 'python' and 'pyor ''js'}", "content": "print('Hello, World!')"}}"""
+            code_response = await llm.ask(messages=[Message.user_message(code_prompt)],
                 system_msgs=[Message.system_message("You are a code generator for software projects.")],
                 temperature=0.1
             )
@@ -738,8 +692,7 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
             script_path = f"src/{script_file}"
 
             current_code = file_manager.read_file(project_path, script_path)
-            edit_prompt = f"""
-            Based on the task: '{prompt}', the step: '{step.description}', and the language: '{language}',
+            edit_prompt = f"""Based on the task: '{prompt}', the step: '{step.description}', and the language: '{language}',
             edit the following code to fulfill the step requirements:
             {current_code}
             Respond with the updated code as a string.
@@ -968,13 +921,9 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
 
     else:  # Generic action
         try:
-            result = await agent.run(
-                step.description,
-                on_think=on_think,
-                on_tool_execute=on_tool_execute,
-                on_action=on_action,
-                on_run=on_run
-            )
+            # Update memory with step description
+            agent.update_memory("user", step.description)
+            result = await agent.run()
             await task_manager.update_task_step(task_id, step.id, f"Step result: {result}", "log")
             return True, dependencies
         except Exception as e:
