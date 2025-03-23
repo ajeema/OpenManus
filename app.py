@@ -46,6 +46,7 @@ app.add_middleware(
 FRONTEND_URL = "http://localhost:3000"
 BACKEND_API_PREFIX = "/api"
 
+
 # Task Model
 class Step(BaseModel):
     id: int
@@ -53,8 +54,10 @@ class Step(BaseModel):
     status: str = "pending"  # pending, running, completed, failed
     result: str = ""
 
+
 class Plan(BaseModel):
     steps: List[Step] = []
+
 
 class Task(BaseModel):
     id: str
@@ -72,6 +75,7 @@ class Task(BaseModel):
         data = super().model_dump(*args, **kwargs)
         data["created_at"] = self.created_at.isoformat()
         return data
+
 
 class FileManager:
     def __init__(self, base_dir="workspace"):
@@ -119,7 +123,9 @@ class FileManager:
             return os.path.join(project_path, "utils", filename)
 
     def write_file(self, project_path: str, file_path: str, content: str):
-        full_path = self.determine_file_location(project_path, file_path, content) if "/" not in file_path else os.path.join(project_path, file_path)
+        full_path = self.determine_file_location(project_path, file_path,
+                                                 content) if "/" not in file_path else os.path.join(project_path,
+                                                                                                    file_path)
         os.makedirs(os.path.dirname(full_path), exist_ok=True)
         with open(full_path, "w") as f:
             f.write(content)
@@ -140,6 +146,7 @@ class FileManager:
             f.write(new_content)
         return full_path
 
+
 class TaskManager:
     def __init__(self):
         self.tasks: Dict[str, Task] = {}
@@ -155,7 +162,9 @@ class TaskManager:
         task_id = str(uuid.uuid4())
         project_path = self.file_manager.create_project_dir(task_id)
         # Create basic folder structure
-        self.file_manager.create_folder_structure(project_path, {"src": [], "tests": [], "docs": [], "config": [], "assets": [], "static": [], "utils": []})
+        self.file_manager.create_folder_structure(project_path,
+                                                  {"src": [], "tests": [], "docs": [], "config": [], "assets": [],
+                                                   "static": [], "utils": []})
         task = Task(
             id=task_id,
             prompt=prompt,
@@ -182,7 +191,7 @@ class TaskManager:
                     step.status = status
                     step.result = result
                     break
-            await self.queues[task_id].put({"type": "plan", "plan": task.plan.dict()})
+            await self.queues[task_id].put({"type": "plan", "plan": task.plan.model_dump()})
             await self._update_status(task_id)
 
     async def update_token_usage(self, task_id: str, token_usage: Dict[str, int]):
@@ -213,12 +222,14 @@ class TaskManager:
                 "type": "status",
                 "status": task.status,
                 "steps": task.steps,
-                "plan": task.plan.dict(),
+                "plan": task.plan.model_dump(),
                 "token_usage": task.token_usage,
                 "execution_time": task.execution_time,
             })
 
+
 task_manager = TaskManager()
+
 
 # API Endpoints
 @app.get("/download")
@@ -226,6 +237,7 @@ async def download_file(file_path: str):
     if not os.path.exists(file_path):
         raise HTTPException(status_code=404, detail="File not found")
     return FileResponse(file_path, filename=os.path.basename(file_path))
+
 
 @app.post("/api/tasks")
 async def create_task(prompt: str = Body(..., embed=True)):
@@ -239,16 +251,19 @@ async def create_task(prompt: str = Body(..., embed=True)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to create task: {str(e)}")
 
+
 @app.get("/api/tasks")
 async def get_tasks():
     sorted_tasks = sorted(task_manager.tasks.values(), key=lambda task: task.created_at, reverse=True)
     return JSONResponse(content=[task.model_dump() for task in sorted_tasks])
+
 
 @app.get("/api/tasks/{task_id}")
 async def get_task(task_id: str):
     if task_id not in task_manager.tasks:
         raise HTTPException(status_code=404, detail="Task not found")
     return task_manager.tasks[task_id]
+
 
 @app.get("/api/tasks/{task_id}/plan")
 async def get_task_plan(task_id: str):
@@ -304,6 +319,7 @@ async def get_task_plan(task_id: str):
         return flow.planning_tool.plans.get(flow.active_plan_id, {"error": "No active plan found"})
     return {"error": "No active plan found"}
 
+
 @app.get("/api/tasks/{task_id}/events")
 async def task_events(task_id: str):
     async def event_generator():
@@ -345,6 +361,7 @@ async def task_events(task_id: str):
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
+
 @app.get("/api/config")
 async def get_config():
     root_dir = Path(__file__).parent
@@ -367,6 +384,7 @@ async def get_config():
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": f"Failed to read config: {str(e)}"})
 
+
 @app.post("/api/config")
 async def save_config(request: Request):
     config_path = Path("config/config.toml")
@@ -378,6 +396,7 @@ async def save_config(request: Request):
         return JSONResponse({"status": "success"})
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to save config: {str(e)}")
+
 
 # Task Execution
 async def run_task(task_id: str, prompt: str):
@@ -414,7 +433,8 @@ async def run_task(task_id: str, prompt: str):
             agent = PlanningAgent(name="Planner", description="A planning-focused agent for structured task execution")
             active_agents['planner'] = agent
         else:
-            agent = Manus(name="Manus", description="A versatile agent that can solve various tasks using multiple tools")
+            agent = Manus(name="Manus",
+                          description="A versatile agent that can solve various tasks using multiple tools")
             active_agents['manus'] = agent
 
         # Initialize planning flow
@@ -451,7 +471,7 @@ async def run_task(task_id: str, prompt: str):
             system_msgs=[system_message]
         )
         steps = [step.strip() for step in response.split('\n') if step.strip()]
-        plan_steps = [Step(id=i+1, description=step) for i, step in enumerate(steps)]
+        plan_steps = [Step(id=i + 1, description=step) for i, step in enumerate(steps)]
         task_manager.tasks[task_id].plan.steps = plan_steps
         await task_manager.update_plan_step(task_id, 0, "completed", "Plan created")
         await task_manager._update_status(task_id)
@@ -482,7 +502,8 @@ async def run_task(task_id: str, prompt: str):
                     "log"
                 )
 
-            success, step_deps = await execute_step(agent, task_id, step, task_manager.file_manager, active_agents, prompt, language)
+            success, step_deps = await execute_step(agent, task_id, step, task_manager.file_manager, active_agents,
+                                                    prompt, language)
             if not success:
                 action_key = f"{step.description}"
                 action_history.append(action_key)
@@ -547,7 +568,9 @@ async def run_task(task_id: str, prompt: str):
         print(f"Task {task_id} failed: {error_message}")
         await task_manager.fail_task(task_id, error_message)
 
-async def execute_step(agent, task_id: str, step: Step, file_manager: FileManager, active_agents: dict, prompt: str, language: str) -> tuple[bool, list]:
+
+async def execute_step(agent, task_id: str, step: Step, file_manager: FileManager, active_agents: dict, prompt: str,
+                       language: str) -> tuple[bool, list]:
     task = task_manager.tasks[task_id]
     project_path = task.project_path
     dependencies = []
@@ -627,7 +650,8 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
                         subprocess.check_call([sys.executable, "-m", "pip", "install", dep])
                         await task_manager.update_task_step(task_id, step.id, f"Successfully installed {dep}", "log")
                     except Exception as e:
-                        await task_manager.update_task_step(task_id, step.id, f"Failed to install {dep}: {str(e)}", "error")
+                        await task_manager.update_task_step(task_id, step.id, f"Failed to install {dep}: {str(e)}",
+                                                            "error")
                         return False, dependencies
                 # Create requirements.txt
                 req_path = file_manager.write_file(project_path, "requirements.txt", "\n".join(dependencies))
@@ -647,14 +671,17 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
                 await task_manager.track_file(task_id, pkg_path)
                 try:
                     subprocess.check_call(["npm", "install"], cwd=project_path)
-                    await task_manager.update_task_step(task_id, step.id, "Successfully installed JavaScript dependencies", "log")
+                    await task_manager.update_task_step(task_id, step.id,
+                                                        "Successfully installed JavaScript dependencies", "log")
                 except Exception as e:
-                    await task_manager.update_task_step(task_id, step.id, f"Failed to install JavaScript dependencies: {str(e)}", "error")
+                    await task_manager.update_task_step(task_id, step.id,
+                                                        f"Failed to install JavaScript dependencies: {str(e)}", "error")
                     return False, dependencies
 
             return True, dependencies
         except Exception as e:
-            await task_manager.update_task_step(task_id, step.id, f"Failed to identify/install dependencies: {str(e)}", "error")
+            await task_manager.update_task_step(task_id, step.id, f"Failed to identify/install dependencies: {str(e)}",
+                                                "error")
             return False, dependencies
 
     elif action_type == "generate_code":
@@ -665,9 +692,10 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
             Respond with a JSON object in the following format:
             {{"filename": "`example.{language == 'python' and 'pyor ''js'}", "content": "print('Hello, World!')"}}"""
             code_response = await llm.ask(messages=[Message.user_message(code_prompt)],
-                system_msgs=[Message.system_message("You are a code generator for software projects.")],
-                temperature=0.1
-            )
+                                          system_msgs=[Message.system_message(
+                                              "You are a code generator for software projects.")],
+                                          temperature=0.1
+                                          )
             code_info = json.loads(code_response.strip())
             filename = code_info.get("filename", f"main.{language == 'python' and 'py' or 'js'}")
             content = code_info.get("content", "")
@@ -725,7 +753,8 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
             elif language == "javascript":
                 cmd = ["node", script_path]
             else:
-                await task_manager.update_task_step(task_id, step.id, f"Unsupported language for execution: {language}", "error")
+                await task_manager.update_task_step(task_id, step.id, f"Unsupported language for execution: {language}",
+                                                    "error")
                 return False, dependencies
 
             process = subprocess.run(cmd, cwd=project_path, capture_output=True, text=True)
@@ -736,31 +765,39 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
                 match = re.search(r"No module named '(\w+)'", result)
                 if match:
                     module_name = match.group(1)
-                    await task_manager.update_task_step(task_id, step.id, f"Missing module '{module_name}'. Attempting to install...", "log")
+                    await task_manager.update_task_step(task_id, step.id,
+                                                        f"Missing module '{module_name}'. Attempting to install...",
+                                                        "log")
                     try:
                         subprocess.check_call([sys.executable, "-m", "pip", "install", module_name])
                         dependencies.append(module_name)
-                        await task_manager.update_task_step(task_id, step.id, f"Successfully installed {module_name}", "log")
+                        await task_manager.update_task_step(task_id, step.id, f"Successfully installed {module_name}",
+                                                            "log")
                         # Retry execution
                         process = subprocess.run(cmd, cwd=project_path, capture_output=True, text=True)
                         result = process.stdout + process.stderr
                     except Exception as e:
-                        await task_manager.update_task_step(task_id, step.id, f"Failed to install {module_name}: {str(e)}", "error")
+                        await task_manager.update_task_step(task_id, step.id,
+                                                            f"Failed to install {module_name}: {str(e)}", "error")
                         return False, dependencies
             elif "Cannot find module" in result and language == "javascript":
                 match = re.search(r"Cannot find module '(\w+)'", result)
                 if match:
                     module_name = match.group(1)
-                    await task_manager.update_task_step(task_id, step.id, f"Missing module '{module_name}'. Attempting to install...", "log")
+                    await task_manager.update_task_step(task_id, step.id,
+                                                        f"Missing module '{module_name}'. Attempting to install...",
+                                                        "log")
                     try:
                         subprocess.check_call(["npm", "install", module_name], cwd=project_path)
                         dependencies.append(module_name)
-                        await task_manager.update_task_step(task_id, step.id, f"Successfully installed {module_name}", "log")
+                        await task_manager.update_task_step(task_id, step.id, f"Successfully installed {module_name}",
+                                                            "log")
                         # Retry execution
                         process = subprocess.run(cmd, cwd=project_path, capture_output=True, text=True)
                         result = process.stdout + process.stderr
                     except Exception as e:
-                        await task_manager.update_task_step(task_id, step.id, f"Failed to install {module_name}: {str(e)}", "error")
+                        await task_manager.update_task_step(task_id, step.id,
+                                                            f"Failed to install {module_name}: {str(e)}", "error")
                         return False, dependencies
 
             if process.returncode == 0:
@@ -780,12 +817,14 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
                     )
                     file_manager.update_file(project_path, script_path, fixed_code)
                     await task_manager.track_file(task_id, script_path)
-                    await task_manager.update_task_step(task_id, step.id, f"Fixed script and saved to {script_path}", "log")
+                    await task_manager.update_task_step(task_id, step.id, f"Fixed script and saved to {script_path}",
+                                                        "log")
                     # Retry execution
                     process = subprocess.run(cmd, cwd=project_path, capture_output=True, text=True)
                     result = process.stdout + process.stderr
                     if process.returncode == 0:
-                        await task_manager.update_task_step(task_id, step.id, "Script executed successfully after fix", "log")
+                        await task_manager.update_task_step(task_id, step.id, "Script executed successfully after fix",
+                                                            "log")
                         return True, dependencies
                 await task_manager.update_task_step(task_id, step.id, f"Script execution failed: {result}", "error")
                 return False, dependencies
@@ -823,7 +862,8 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
                     subprocess.check_call([sys.executable, "-m", "pip", "install", "pytest"])
                     dependencies.append("pytest")
                 except Exception as e:
-                    await task_manager.update_task_step(task_id, step.id, f"Failed to install pytest: {str(e)}", "error")
+                    await task_manager.update_task_step(task_id, step.id, f"Failed to install pytest: {str(e)}",
+                                                        "error")
                     return False, dependencies
             elif language == "javascript":
                 try:
@@ -845,7 +885,8 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
             elif language == "javascript":
                 cmd = ["npm", "test"]
             else:
-                await task_manager.update_task_step(task_id, step.id, f"Unsupported language for testing: {language}", "error")
+                await task_manager.update_task_step(task_id, step.id, f"Unsupported language for testing: {language}",
+                                                    "error")
                 return False, dependencies
 
             process = subprocess.run(cmd, cwd=project_path, capture_output=True, text=True)
@@ -859,10 +900,12 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
                 if swe_agent:
                     test_fix_prompt = f"The tests failed with error: {result}. Fix the code and tests."
                     src_dir = os.path.join(project_path, "src")
-                    script_files = [f for f in os.listdir(src_dir) if f.endswith(f".{language == 'python' and 'py' or 'js'}")]
+                    script_files = [f for f in os.listdir(src_dir) if
+                                    f.endswith(f".{language == 'python' and 'py' or 'js'}")]
                     script_file = script_files[0] if script_files else None
                     test_dir = os.path.join(project_path, "tests")
-                    test_files = [f for f in os.listdir(test_dir) if f.endswith(f".{language == 'python' and 'py' or 'js'}")]
+                    test_files = [f for f in os.listdir(test_dir) if
+                                  f.endswith(f".{language == 'python' and 'py' or 'js'}")]
                     test_file = test_files[0] if test_files else None
 
                     if script_file and test_file:
@@ -891,7 +934,8 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
                         process = subprocess.run(cmd, cwd=project_path, capture_output=True, text=True)
                         result = process.stdout + process.stderr
                         if process.returncode == 0:
-                            await task_manager.update_task_step(task_id, step.id, "Tests passed successfully after fix", "log")
+                            await task_manager.update_task_step(task_id, step.id, "Tests passed successfully after fix",
+                                                                "log")
                             return True, dependencies
                 await task_manager.update_task_step(task_id, step.id, f"Tests failed: {result}", "error")
                 return False, dependencies
@@ -916,7 +960,8 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
             await task_manager.update_task_step(task_id, step.id, "Updated README.md", "log")
             return True, dependencies
         except Exception as e:
-            await task_manager.update_task_step(task_id, step.id, f"Failed to generate documentation: {str(e)}", "error")
+            await task_manager.update_task_step(task_id, step.id, f"Failed to generate documentation: {str(e)}",
+                                                "error")
             return False, dependencies
 
     else:  # Generic action
@@ -924,11 +969,26 @@ async def execute_step(agent, task_id: str, step: Step, file_manager: FileManage
             # Update memory with step description
             agent.update_memory("user", step.description)
             result = await agent.run()
-            await task_manager.update_task_step(task_id, step.id, f"Step result: {result}", "log")
+
+            # Handle different result types
+            if result is None:
+                await task_manager.update_task_step(task_id, step.id, "Step completed with no output", "log")
+            elif isinstance(result, dict):
+                if 'observation' in result:
+                    await task_manager.update_task_step(task_id, step.id, f"Observation: {result['observation']}",
+                                                        "log")
+                else:
+                    await task_manager.update_task_step(task_id, step.id, f"Result: {json.dumps(result)}", "log")
+            elif isinstance(result, str):
+                await task_manager.update_task_step(task_id, step.id, f"Result: {result}", "log")
+            else:
+                await task_manager.update_task_step(task_id, step.id, f"Result: {str(result)}", "log")
+
             return True, dependencies
         except Exception as e:
             await task_manager.update_task_step(task_id, step.id, f"Failed to execute step: {str(e)}", "error")
             return False, dependencies
+
 
 # Frontend Proxying
 async def check_frontend_health(url: str) -> bool:
@@ -938,6 +998,7 @@ async def check_frontend_health(url: str) -> bool:
             return response.status_code == 200
         except httpx.RequestError:
             return False
+
 
 def frontend_not_available_response(path: str) -> HTMLResponse:
     return HTMLResponse(
@@ -956,6 +1017,7 @@ def frontend_not_available_response(path: str) -> HTMLResponse:
         """,
         status_code=503
     )
+
 
 @app.get("/{path:path}")
 async def proxy_to_frontend_get(path: str, request: Request):
@@ -987,6 +1049,7 @@ async def proxy_to_frontend_get(path: str, request: Request):
         except httpx.RequestError as e:
             print(f"Error proxying GET to frontend: {str(e)}")
             return frontend_not_available_response(path)
+
 
 @app.post("/{path:path}")
 async def proxy_to_frontend_post(path: str, request: Request):
@@ -1020,15 +1083,18 @@ async def proxy_to_frontend_post(path: str, request: Request):
             print(f"Error proxying POST to frontend: {str(e)}")
             return frontend_not_available_response(path)
 
+
 # Exception Handling
 @app.exception_handler(Exception)
 async def generic_exception_handler(request: Request, exc: Exception):
     print(f"Unhandled server error: {str(exc)}")
     return JSONResponse(status_code=500, content={"message": f"Server error: {str(exc)}", "path": request.url.path})
 
+
 # Startup Configuration
 def open_local_browser(config):
     webbrowser.open_new_tab(f"http://{config['host']}:{config['port']}/")
+
 
 def load_config():
     try:
@@ -1042,6 +1108,7 @@ def load_config():
     except (FileNotFoundError, KeyError) as e:
         print(f"Config error: {str(e)}, using defaults: host=127.0.0.1, port=8000")
         return {"host": "127.0.0.1", "port": 8000}
+
 
 if __name__ == "__main__":
     import uvicorn

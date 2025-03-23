@@ -329,16 +329,46 @@
     @apply bg-[#f5f5f5] p-[10px] rounded-[4px];
   }
 
-  .result-container {
-    @apply p-[15px] break-words;
+  .timeline-step {
+    @apply relative pl-8 pb-4 border-l border-gray-600 last:border-l-0;
+  }
+
+  .timeline-step::before {
+    content: '';
+    @apply absolute w-3 h-3 rounded-full bg-gray-600 -left-[6px] top-2;
+  }
+
+  .timeline-step.completed::before {
+    @apply bg-green-500;
+  }
+
+  .timeline-header {
+    @apply flex items-center gap-2 text-gray-300 cursor-pointer hover:bg-gray-800/30 rounded p-2 -ml-2;
+  }
+
+  .timeline-content {
+    @apply mt-2 pl-2;
+  }
+
+  .file-creation {
+    @apply mt-2 flex items-center gap-2 bg-gray-800/50 text-gray-400 py-1 px-3 rounded-md w-fit text-sm;
+  }
+
+  .file-icon {
+    @apply text-gray-500;
+  }
+
+  .task-description {
+    @apply text-gray-400 text-sm mb-2;
   }
 
   .container {
     @apply flex justify-center items-start min-h-screen pt-[16px] px-[4px] ml-[250px];
+    transition: margin 0.3s ease;
   }
 
   .container.with-result {
-    @apply ml-[250px] mr-[320px];
+    @apply ml-[250px] mr-[400px];
   }
 
   .main-panel {
@@ -391,6 +421,43 @@
     animation-delay: 0.4s;
   }
 
+  .observation-message {
+    @apply bg-blue-50 text-blue-800 p-3 rounded-lg my-2 border border-blue-200 flex items-center gap-2;
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .thinking-message {
+    @apply bg-gray-50 text-gray-800 p-3 rounded-lg my-2 border border-gray-200 flex items-center gap-2;
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .observation-icon,
+  .thinking-icon {
+    @apply text-lg flex-shrink-0;
+  }
+
+  .message {
+    @apply p-3 rounded-lg my-2 bg-gray-100 text-gray-800;
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .step-message {
+    @apply bg-purple-50 text-purple-800 p-3 rounded-lg my-2 border border-purple-200 flex items-center gap-2;
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .status-message {
+    @apply bg-yellow-50 text-yellow-800 p-3 rounded-lg my-2 border border-yellow-200 flex items-center gap-2;
+    animation: fadeIn 0.3s ease-out;
+  }
+
+  .user-message {
+    @apply bg-blue-100 text-blue-900;
+  }
+
+  .assistant-message {
+    @apply bg-green-100 text-green-900;
+  }
 }
 
 @media (max-width: 768px) {

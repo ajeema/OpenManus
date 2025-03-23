@@ -1,64 +1,97 @@
 import React from 'react';
 
 const TaskArea = React.forwardRef(({ steps, className = '' }, ref) => {
-TaskArea.displayName = 'TaskArea';
-  const getStepIcon = (type) => {
-    const icons = {
-      think: '🤔',
-      tool: '🛠️',
-      act: '🚀',
-      log: '📝',
-      run: '▶️',
-      message: '💬',
-      complete: '✅',
-      error: '❌',
-      planning: '📝' // Added planning icon
-    };
-    return icons[type] || '📌';
+  const [expandedSteps, setExpandedSteps] = React.useState({});
+
+  // Filter to show only major steps
+  const isMajorStep = (step) => {
+    // Include observe steps but filter out other minor types
+    const minorTypes = ['log', 'message'];
+    return !minorTypes.includes(step.type);
   };
 
-  const getStepClass = (type) => {
-    switch (type) {
-      case 'think':
-        return 'bg-blue-100 text-blue-800';
-      case 'tool':
-        return 'bg-green-100 text-green-800';
-      case 'act':
-        return 'bg-purple-100 text-purple-800';
-      case 'planning':
-        return 'bg-yellow-100 text-yellow-800';
-      case 'error':
-        return 'bg-red-100 text-red-800';
-      default:
-        return 'bg-gray-100 text-gray-800';
+  const getStepContent = (step) => {
+    if (!step || !step.content) return 'No content';
+
+    // Handle string content
+    if (typeof step.content === 'string') {
+      return step.content;
     }
+
+    // Handle object content
+    if (typeof step.content === 'object') {
+      // Check for nested content structures
+      const message = step.content.message || step.content.text;
+      if (message) {
+        if (typeof message === 'string') {
+          return message;
+        }
+        if (typeof message === 'object') {
+          return message.text || message.message || JSON.stringify(message);
+        }
+      }
+      // Fallback to direct JSON string if no message/text found
+      try {
+        return JSON.stringify(step.content);
+      } catch (e) {
+        return `${step.type || 'Step'} ${step.step || ''}`;
+      }
+    }
+
+    return `${step.type || 'Step'} ${step.step || ''}`;
+  };
+
+  const majorSteps = steps.filter(isMajorStep);
+
+  const toggleStep = (index) => {
+    setExpandedSteps(prev => ({
+      ...prev,
+      [index]: !prev[index]
+    }));
+  };
+
+  const renderStep = (step, index) => {
+    const isExpanded = expandedSteps[index];
+
+    return (
+      <div key={index} className={`timeline-step ${step.status === 'completed' ? 'completed' : ''}`}>
+        <div className="timeline-header" onClick={() => toggleStep(index)}>
+          <span>{step.status === 'completed' ? '✓' : '◯'}</span>
+          <span className="flex-1">
+            {getStepContent(step).split('\n')[0]}
+          </span>
+          <span>{isExpanded ? '∧' : '∨'}</span>
+        </div>
+        {isExpanded && (
+          <div className="timeline-content">
+            <p className="task-description">
+              {getStepContent(step)}
+            </p>
+            {step.files && step.files.map((file, fileIndex) => (
+              <div key={fileIndex} className="file-creation">
+                <span className="file-icon">📄</span>
+                <span>{file}</span>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
   };
 
   return (
-    <div ref={ref} className={`prose prose-invert max-w-none ${className}`}>
-      {steps.length === 0 ? (
+    <div ref={ref} className={`prose prose-invert max-w-none p-6 ${className}`}>
+      {majorSteps.length === 0 ? (
         <p className="text-gray-500">No steps yet...</p>
       ) : (
-        steps.map((step, index) => (
-          <div key={index} className="mb-4">
-            <div className="flex items-center text-sm text-gray-500">
-              <span className="mr-2">{getStepIcon(step.type)}</span>
-              <span>{step.timestamp}</span>
-              {/* Added step number display */}
-              {step.step !== undefined && (
-                <span className="ml-2 px-2 py-1 bg-gray-200 rounded-full text-xs">
-                  Step {step.step}
-                </span>
-              )}
-            </div>
-            <div className={`mt-1 p-3 rounded ${getStepClass(step.type)}`}>
-              {step.content}
-            </div>
-          </div>
-        ))
+        <div className="space-y-1">
+          {majorSteps.map((step, index) => renderStep(step, index))}
+        </div>
       )}
     </div>
   );
 });
+
+TaskArea.displayName = 'TaskArea';
 
 export default TaskArea;
