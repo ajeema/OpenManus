@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Enhanced Manus Frontend</title>
+    <link rel="stylesheet" href="../static/styles.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="stylesheet"
+          href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/styles/atom-one-dark.min.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.7.0/highlight.min.js"></script>
+</head>
+<body>
+<div class="container">
+    <!-- Sidebar (History Panel) -->
+    <div class="sidebar">
+        <div class="sidebar-top">
+            <button class="btn-icon sidebar-toggle"><i class="fas fa-book"></i></button>
+            <button class="btn-icon"><i class="fas fa-search"></i></button>
+            <button class="btn-icon new-task" onclick="createNewTask()"><i class="fas fa-plus"></i> New task</button>
+        </div>
+        <div id="task-list" class="task-list"></div>
+        <div class="sidebar-bottom">
+            <div class="user-avatar">
+                <img src="../static/images/avatar.jpg" alt="User Avatar">
+            </div>
+            <div class="action-buttons">
+                <button class="btn-icon"><i class="fas fa-envelope"></i></button>
+                <button class="btn-icon"><i class="fas fa-home"></i></button>
+                <button class="btn-icon"><i class="fas fa-folder"></i></button>
+                <button class="btn-icon config-btn"><i class="fas fa-cog"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Main Panel -->
+    <div class="chat-panel">
+        <div class="chat-header">
+            <div class="task-info">
+                <h2 id="current-task-title">Start a New Task</h2>
+                <div class="task-steps" id="task-steps"></div>
+            </div>
+            <div class="header-actions">
+                <button class="btn-icon"><i class="fas fa-share-alt"></i> Share</button>
+                <button class="btn-icon"><i class="fas fa-bookmark"></i></button>
+                <button class="btn-icon"><i class="fas fa-ellipsis-h"></i></button>
+            </div>
+        </div>
+
+        <div class="chat-messages" id="chat-messages"></div>
+
+        <div class="thinking-container" id="thinking-container"></div>
+
+        <div class="completion-section">
+            <div class="completion-header">
+                <span>Task Completion</span>
+                <i class="fas fa-chevron-down"></i>
+            </div>
+            <div class="completion-content hidden"></div>
+        </div>
+
+        <div class="chat-input-container">
+            <div class="input-wrapper">
+                <div class="input-actions">
+                    <button class="btn-icon"><i class="fas fa-paperclip"></i></button>
+                </div>
+                <textarea id="prompt-input" placeholder="Enter task prompt..."></textarea>
+                <button class="btn-send" onclick="createTask()" disabled><i class="fas fa-paper-plane"></i></button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Code Panel -->
+    <div class="code-panel">
+        <div class="code-panel-header">
+            <h2>OpenManus's Computer</h2>
+            <div class="header-actions">
+                <button class="btn-icon btn-fullscreen"><i class="fas fa-expand"></i></button>
+                <button class="btn-icon btn-collapse"><i class="fas fa-chevron-right"></i></button>
+            </div>
+        </div>
+        <div class="code-content">
+            <div class="file-info">
+                <span class="file-path">main.js</span>
+                <select class="language-select">
+                    <option value="javascript">JavaScript</option>
+                    <option value="python">Python</option>
+                    <option value="markdown">Markdown</option>
+                </select>
+            </div>
+            <pre><code class="language-javascript" id="code-output">// Code output will appear here</code></pre>
+        </div>
+        <div class="playback-controls">
+            <div class="playback-left">
+                <button class="btn-icon btn-play"><i class="fas fa-play"></i></button>
+                <button class="btn-icon btn-mute"><i class="fas fa-volume-mute"></i></button>
+            </div>
+            <div class="progress-bar">
+                <div class="progress-fill" style="width: 0%;"></div>
+            </div>
+        </div>
+        <div class="code-output-container" id="code-execution-output"></div>
+    </div>
+
+    <!-- Mini-View Toggle -->
+    <div class="mini-view-toggle hidden">
+        <button class="btn-expand"><i class="fas fa-chevron-left"></i></button>
+    </div>
+
+    <!-- Configuration Modal -->
+    <div id="config-modal" class="config-modal">
+        <div class="config-modal-content">
+            <div class="config-modal-header">
+                <h2>System Configuration</h2>
+                <p>Please fill in the necessary configuration information to continue using the system</p>
+                <button class="btn-close" onclick="closeConfigModal()"><i class="fas fa-times"></i></button>
+            </div>
+
+            <div class="config-modal-body">
+                <div class="note-box">
+                    <p>⚠️ Please ensure that the following configuration information is correct.</p>
+                    <p>If you do not have an API key, please obtain one from the corresponding AI service provider.</p>
+                </div>
+
+                <div class="config-section">
+                    <h3>LLM Configuration</h3>
+                    <div class="form-group">
+                        <label for="llm-model">Model Name <span class="required-mark">*</span></label>
+                        <input type="text" id="llm-model" placeholder="e.g., claude-3-5-sonnet">
+                    </div>
+                    <div class="form-group">
+                        <label for="llm-base-url">API Base URL <span class="required-mark">*</span></label>
+                        <input type="text" id="llm-base-url" placeholder="e.g., https://api.openai.com/v1">
+                    </div>
+                    <div class="form-group">
+                        <label for="llm-api-key">API Key <span class="required-mark">*</span></label>
+                        <input type="password" id="llm-api-key" placeholder="Your API key">
+                    </div>
+                </div>
+
+                <div class="config-section">
+                    <h3>Server Configuration</h3>
+                    <div class="form-group">
+                        <label for="server-host">Host <span class="required-mark">*</span></label>
+                        <input type="text" id="server-host" placeholder="e.g., localhost">
+                    </div>
+                    <div class="form-group">
+                        <label for="server-port">Port <span class="required-mark">*</span></label>
+                        <input type="number" id="server-port" placeholder="e.g., 5172">
+                    </div>
+                </div>
+            </div>
+
+            <div class="config-modal-footer">
+                <p id="config-error" class="config-error"></p>
+                <div class="config-actions">
+                    <button id="save-config-btn" class="primary-btn" onclick="saveConfig()">Save Configuration</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="../static/main.js"></script>
+</div>
+</body>
+</html>
