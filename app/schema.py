@@ -159,6 +159,15 @@ class Message(BaseModel):
 class Memory(BaseModel):
     messages: List[Message] = Field(default_factory=list)
     max_messages: int = Field(default=100)
+    # def __init__(self):
+    #     self.messages: List[Message] = []
+
+    def last_user_message(self):
+        # Return the last user message if any
+        for msg in reversed(self.messages):
+            if msg.role == "user":
+                return msg
+        return None
 
     def add_message(self, message: Message) -> None:
         """Add a message to memory"""
